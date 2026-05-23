@@ -1,0 +1,26 @@
+{
+  "name": "everything",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NTFS file search engine — repo tooling",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "protect:branch": "node scripts/apply-branch-protection.mjs",
+    "ci:format": "node scripts/ci/format.mjs",
+    "ci:build": "node scripts/ci/build.mjs",
+    "ci:test": "node scripts/ci/test.mjs",
+    "ci:package-release": "node scripts/ci/package-release.mjs",
+    "build": "node scripts/build.mjs --config Debug",
+    "build:release": "node scripts/build.mjs --config Release",
+    "test": "node scripts/test.mjs --config Release",
+    "dev": "node scripts/dev.mjs",
+    "version": "node scripts/version.mjs",
+    "format": "node scripts/format.mjs",
+    "format:check": "node scripts/format-check.mjs"
+  }
+}

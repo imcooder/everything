@@ -1,0 +1,12 @@
+.DS_Store
+*.obj
+*.o
+*.exe
+*.pdb
+*.ilk
+*.user
+*.suo
+/build/
+/out/
+/vcpkg_installed/
+/node_modules/

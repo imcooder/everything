@@ -1,0 +1,313 @@
+name: Build & Release
+
+on:
+  push:
+    branches: ["release_*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CI: true
+  VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg/bincache,readwrite
+  BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  check-config:
+    name: Build Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+      release_tag: ${{ steps.info.outputs.release_tag }}
+      build_time: ${{ steps.info.outputs.build_time }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Resolve version & tag
+        id: info
+        shell: bash
+        run: |
+          BASE=$(node -p "require('./package.json').version")
+          MAJOR_MINOR=$(echo "$BASE" | sed 's/\.[0-9]*$//')
+          VERSION="${MAJOR_MINOR}.${{ github.run_number }}"
+          RELEASE_TAG="v${VERSION}"
+          BUILD_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
+
+          echo "## Build Configuration" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Setting | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Version | \`${VERSION}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Release Tag | [\`${RELEASE_TAG}\`](${RELEASE_URL}) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch | \`${{ github.ref_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build Number | \`${{ github.run_number }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit | [\`${{ github.sha }}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Workflow | [Run #${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**[→ Release Page](${RELEASE_URL})** (created after CI passes)" >> "$GITHUB_STEP_SUMMARY"
+
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm run ci:format
+
+  build:
+    name: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/bincache
+            vcpkg/downloads
+            vcpkg/installed
+            vcpkg/packages
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-
+
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: build-${{ hashFiles('src/**', 'tests/**', 'CMakeLists.txt', 'vcpkg.json', 'package.json') }}
+
+      - run: npm run ci:build
+
+  test:
+    name: test
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/bincache
+            vcpkg/downloads
+            vcpkg/installed
+            vcpkg/packages
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-
+
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: build-${{ hashFiles('src/**', 'tests/**', 'CMakeLists.txt', 'vcpkg.json', 'package.json') }}
+
+      - run: npm run ci:test
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [check-config, format, test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Generate initial release notes
+        env:
+          VERSION: ${{ needs.check-config.outputs.version }}
+          RELEASE_TAG: ${{ needs.check-config.outputs.release_tag }}
+          BUILD_TIME: ${{ needs.check-config.outputs.build_time }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: node scripts/ci/release-notes.mjs --phase initial > release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check-config.outputs.release_tag }}
+          name: Everything.Core v${{ needs.check-config.outputs.version }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Publish Windows Asset
+    runs-on: windows-latest
+    needs: [check-config, create-release, test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/bincache
+            vcpkg/downloads
+            vcpkg/installed
+            vcpkg/packages
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-
+
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: build-${{ hashFiles('src/**', 'tests/**', 'CMakeLists.txt', 'vcpkg.json', 'package.json') }}
+
+      - name: Package release binary
+        run: npm run ci:package-release
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check-config.outputs.release_tag }}
+          files: output/release/*.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Step summary
+        shell: bash
+        run: |
+          VERSION="${{ needs.check-config.outputs.version }}"
+          RELEASE_TAG="${{ needs.check-config.outputs.release_tag }}"
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
+          ASSET="Everything.Core-${VERSION}-win-x64.exe"
+          echo "## Windows Release Asset" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| File | Link |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| \`${ASSET}\` | [Release page](${RELEASE_URL}) |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: everything-win-x64-${{ needs.check-config.outputs.version }}
+          path: output/release/*
+          retention-days: 30
+
+  final-check:
+    name: Final Check
+    runs-on: ubuntu-latest
+    needs: [check-config, format, build, test, create-release, publish]
+    if: always()
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check results and update release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-config.outputs.version }}
+          RELEASE_TAG: ${{ needs.check-config.outputs.release_tag }}
+          BUILD_TIME: ${{ needs.check-config.outputs.build_time }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          FORMAT_RESULT: ${{ needs.format.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "Release Pipeline Summary"
+          echo "=========================================="
+          echo "  format:  ${FORMAT_RESULT}"
+          echo "  build:   ${BUILD_RESULT}"
+          echo "  test:    ${TEST_RESULT}"
+          echo "  publish: ${PUBLISH_RESULT}"
+          echo ""
+
+          FAILED=false
+          for stage in "$FORMAT_RESULT" "$BUILD_RESULT" "$TEST_RESULT" "$PUBLISH_RESULT"; do
+            if [ "$stage" = "failure" ] || [ "$stage" = "cancelled" ]; then
+              FAILED=true
+            fi
+          done
+
+          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
+
+          echo "## Pipeline Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Stage | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Format | ${FORMAT_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build | ${BUILD_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Test | ${TEST_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Publish | ${PUBLISH_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$FAILED" = "true" ]; then
+            echo "**Release pipeline failed.** See failed jobs above." >> "$GITHUB_STEP_SUMMARY"
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "Partial release may exist: [${RELEASE_TAG}](${RELEASE_URL})" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 1
+          fi
+
+          BODY=$(node scripts/ci/release-notes.mjs --phase final)
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes "$BODY"
+
+          echo "**[→ Release Page](${RELEASE_URL})**" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Release notes updated with download links and build summary." >> "$GITHUB_STEP_SUMMARY"
+
+          echo "=========================================="
+          echo "[OK] Release ${RELEASE_TAG} published"
+          echo "=========================================="

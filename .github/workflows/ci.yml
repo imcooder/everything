@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+  VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg/bincache,readwrite
+  BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm run ci:format
+
+  build:
+    name: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/bincache
+            vcpkg/downloads
+            vcpkg/installed
+            vcpkg/packages
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-
+
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: build-${{ hashFiles('src/**', 'tests/**', 'CMakeLists.txt', 'vcpkg.json', 'package.json') }}
+
+      - run: npm run ci:build
+
+  test:
+    name: test
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/bincache
+            vcpkg/downloads
+            vcpkg/installed
+            vcpkg/packages
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-
+
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: build-${{ hashFiles('src/**', 'tests/**', 'CMakeLists.txt', 'vcpkg.json', 'package.json') }}
+
+      - run: npm run ci:test
