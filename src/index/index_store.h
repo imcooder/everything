@@ -4,6 +4,7 @@
 #include "index/bump_string_pool.h"
 #include "index/index_types.h"
 #include "index/query_matcher.h"
+#include "index/query_parser.h"
 
 #include <functional>
 #include <memory>
@@ -29,6 +30,10 @@ public:
   UINT32 GetSearchEntryCount() const;
   UINT32 GetSearchEntryNodeId(UINT32 idx) const;
   bool NodeMatchesQuery(UINT32 nodeId, const CQueryMatcher &matcher) const;
+  void ResolveParsedQuery(WCHAR wchVolumeDrive, CParsedQuery &plan) const;
+  bool IsNodeInSubtree(UINT32 nodeId, const CParsedQuery &plan) const;
+  bool NodeMatchesParsedQuery(UINT32 nodeId, const CParsedQuery &plan) const;
+  bool MaterializePathUtf8(UINT32 nodeId, std::vector<char> &rgPathUtf8) const;
 
   INDEX_STATS GetStats() const;
 

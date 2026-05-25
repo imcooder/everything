@@ -1,5 +1,7 @@
 #include "volume/volume_manager.h"
 
+#include "volume/search_all_coordinator.h"
+
 #include "core/platform.h"
 
 namespace volume {
@@ -146,6 +148,45 @@ std::vector<WCHAR> CVolumeManager::GetDriveLetters() const {
   }
 
   return letters;
+}
+
+void CVolumeManager::SearchAllAsync(SEARCH_REQUEST_ID ullRequestId, LPCWSTR wszQuery, std::shared_ptr<ISearchSink> pSink) {
+  if (ullRequestId == SEARCH_REQUEST_ID_INVALID || pSink == nullptr) {
+    return;
+  }
+
+  std::vector<CVolume *> rgReadyVolumes;
+  {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    rgReadyVolumes.reserve(m_mapVolumes.size());
+
+    for (auto &pair : m_mapVolumes) {
+      if (pair.second != nullptr && pair.second->IsReadyForSearch()) {
+        rgReadyVolumes.push_back(pair.second.get());
+      }
+    }
+  }
+
+  if (rgReadyVolumes.empty()) {
+    pSink->OnComplete(ullRequestId, true);
+    return;
+  }
+
+  const auto pCoordinator = std::make_shared<CSearchAllCoordinator>(ullRequestId, std::move(pSink), static_cast<UINT32>(rgReadyVolumes.size()));
+
+  for (CVolume *pVolume : rgReadyVolumes) {
+    pVolume->SearchAsync(ullRequestId, wszQuery, pCoordinator);
+  }
+}
+
+void CVolumeManager::CancelSearchAll(SEARCH_REQUEST_ID ullRequestId) {
+  std::lock_guard<std::mutex> lock(m_mutex);
+
+  for (auto &pair : m_mapVolumes) {
+    if (pair.second != nullptr) {
+      pair.second->CancelSearch(ullRequestId);
+    }
+  }
 }
 
 bool CVolumeManager::ShouldIncludeDrive(WCHAR wchDriveLetter) const {

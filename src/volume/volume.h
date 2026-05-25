@@ -2,8 +2,8 @@
 
 #include "core/ntfs_types.h"
 #include "index/index_store.h"
+#include "index/query_parser.h"
 #include "index/index_types.h"
-#include "index/query_matcher.h"
 #include "io/io_service.h"
 #include "ntfs/ntfs_volume_handle.h"
 #include "ntfs/usn_enumerator.h"
@@ -63,8 +63,11 @@ public:
   // as the USN journal updates the index until cancel, stale id, or a newer query.
   void SearchAsync(SEARCH_REQUEST_ID ullRequestId, LPCWSTR wszQuery, std::shared_ptr<ISearchSink> pSink);
 
-  // Safe from any thread; marks the request cancelled on the volume I/O thread.
   void CancelSearch(SEARCH_REQUEST_ID ullRequestId);
+
+  // Volume I/O thread only.
+  bool MaterializePathUtf8(UINT32 nodeId, std::vector<char> &rgPathUtf8) const;
+  bool MaterializeFullPathUtf8(UINT32 nodeId, std::vector<char> &rgPathUtf8) const;
 
 private:
   void WireUsnCallbacks();
@@ -100,8 +103,7 @@ private:
   struct LIVE_SEARCH {
     SEARCH_REQUEST_ID m_ullRequestId = SEARCH_REQUEST_ID_INVALID;
     std::wstring m_wstrQuery;
-    std::vector<char> m_rgQueryUtf8;
-    index::CQueryMatcher m_matcher;
+    index::CParsedQuery m_query;
     std::unordered_set<UINT32> m_setResults;
     std::shared_ptr<ISearchSink> m_pSink;
     UINT32 m_cScanCursor = 0;

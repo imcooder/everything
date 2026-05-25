@@ -237,16 +237,22 @@ void CVolume::StartLiveSearch(SEARCH_REQUEST_ID ullRequestId, LPCWSTR wszQuery, 
   m_liveSearch.m_cScanCursor = 0;
   m_liveSearch.m_cHits = 0;
 
-  if (wszQuery != nullptr && wszQuery[0] != L'\0') {
-    const UINT32 cch = static_cast<UINT32>(wcslen(wszQuery));
-    index::WideNameToUtf8(wszQuery, static_cast<USHORT>(cch), m_liveSearch.m_rgQueryUtf8);
-  }
-
-  if (!m_liveSearch.m_rgQueryUtf8.empty()) {
-    m_liveSearch.m_matcher.SetQueryUtf8(std::string(m_liveSearch.m_rgQueryUtf8.data(), m_liveSearch.m_rgQueryUtf8.size()));
-  }
+  index::ParseSearchQuery(wszQuery, m_liveSearch.m_query);
+  m_index.ResolveParsedQuery(m_wchDriveLetter, m_liveSearch.m_query);
 
   m_bLiveSearchActive = true;
+
+  if (m_liveSearch.m_query.m_pathScope == index::PATH_SCOPE_NONE) {
+    m_liveSearch.m_phase = LIVE_SEARCH_PHASE_LIVE;
+    m_setCancelledSearchIds.erase(ullRequestId);
+
+    if (pSink != nullptr) {
+      pSink->OnInitialScanComplete(ullRequestId, m_wchDriveLetter);
+    }
+
+    return;
+  }
+
   PostScanChunk();
 }
 
@@ -287,13 +293,13 @@ void CVolume::RunScanChunk() {
     const UINT32 nodeId = m_index.GetSearchEntryNodeId(m_liveSearch.m_cScanCursor++);
     ++cProcessed;
 
-    if (m_index.NodeMatchesQuery(nodeId, m_liveSearch.m_matcher)) {
+    if (m_index.NodeMatchesParsedQuery(nodeId, m_liveSearch.m_query)) {
       if (m_liveSearch.m_setResults.insert(nodeId).second) {
         rgBatch.push_back(nodeId);
         ++m_liveSearch.m_cHits;
 
         if (rgBatch.size() >= SEARCH_STREAM_BATCH_SIZE) {
-          pSink->OnBatch(ullRequestId, rgBatch.data(), static_cast<UINT32>(rgBatch.size()));
+          pSink->OnBatch(ullRequestId, m_wchDriveLetter, rgBatch.data(), static_cast<UINT32>(rgBatch.size()));
           rgBatch.clear();
         }
       }
@@ -301,7 +307,7 @@ void CVolume::RunScanChunk() {
   }
 
   if (!rgBatch.empty() && pSink != nullptr) {
-    pSink->OnBatch(ullRequestId, rgBatch.data(), static_cast<UINT32>(rgBatch.size()));
+    pSink->OnBatch(ullRequestId, m_wchDriveLetter, rgBatch.data(), static_cast<UINT32>(rgBatch.size()));
   }
 
   if (m_liveSearch.m_cScanCursor >= cTotal) {
@@ -309,7 +315,7 @@ void CVolume::RunScanChunk() {
     m_setCancelledSearchIds.erase(ullRequestId);
 
     if (pSink != nullptr) {
-      pSink->OnInitialScanComplete(ullRequestId);
+      pSink->OnInitialScanComplete(ullRequestId, m_wchDriveLetter);
     }
 
     TryDispatchSearch();
@@ -334,7 +340,7 @@ void CVolume::UpdateLiveSearchForNode(UINT32 nodeId) {
     return;
   }
 
-  const bool bMatches = m_index.NodeMatchesQuery(nodeId, m_liveSearch.m_matcher);
+  const bool bMatches = m_index.NodeMatchesParsedQuery(nodeId, m_liveSearch.m_query);
   const bool bInResults = m_liveSearch.m_setResults.find(nodeId) != m_liveSearch.m_setResults.end();
 
   if (bMatches && !bInResults) {
@@ -345,7 +351,7 @@ void CVolume::UpdateLiveSearchForNode(UINT32 nodeId) {
     m_liveSearch.m_setResults.insert(nodeId);
     ++m_liveSearch.m_cHits;
     if (pSink != nullptr) {
-      pSink->OnAdded(ullRequestId, nodeId);
+      pSink->OnAdded(ullRequestId, m_wchDriveLetter, nodeId);
     }
     return;
   }
@@ -354,7 +360,7 @@ void CVolume::UpdateLiveSearchForNode(UINT32 nodeId) {
     m_liveSearch.m_setResults.erase(nodeId);
     --m_liveSearch.m_cHits;
     if (pSink != nullptr) {
-      pSink->OnRemoved(ullRequestId, nodeId);
+      pSink->OnRemoved(ullRequestId, m_wchDriveLetter, nodeId);
     }
   }
 }
@@ -505,6 +511,27 @@ std::wstring CVolume::BuildThreadName(LPCWSTR wszSuffix) const {
   name.push_back(L' ');
   name.append(wszSuffix);
   return name;
+}
+
+bool CVolume::MaterializePathUtf8(UINT32 nodeId, std::vector<char> &rgPathUtf8) const {
+  return m_index.MaterializePathUtf8(nodeId, rgPathUtf8);
+}
+
+bool CVolume::MaterializeFullPathUtf8(UINT32 nodeId, std::vector<char> &rgPathUtf8) const {
+  std::vector<char> rgRelative;
+  if (!m_index.MaterializePathUtf8(nodeId, rgRelative)) {
+    return false;
+  }
+
+  rgPathUtf8.clear();
+  rgPathUtf8.push_back(static_cast<char>(m_wchDriveLetter));
+  rgPathUtf8.push_back(':');
+  if (!rgRelative.empty()) {
+    rgPathUtf8.push_back('\\');
+    rgPathUtf8.insert(rgPathUtf8.end(), rgRelative.begin(), rgRelative.end());
+  }
+
+  return true;
 }
 
 } // namespace volume

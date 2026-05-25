@@ -1,6 +1,9 @@
 #include "index/index_store.h"
 
+#include "index/query_parser.h"
 #include "index/utf8_convert.h"
+
+#include <string>
 
 namespace index {
 
@@ -20,6 +23,65 @@ bool IsDotName(LPCWSTR wszName, USHORT cchName) {
 
 bool HasDeleteReason(DWORD dwReason) {
   return (dwReason & USN_REASON_FILE_DELETE) != 0;
+}
+
+bool SegmentEqualsIgnoreCase(const char *pszName, UINT32 cbName, const char *pszSegment, UINT32 cbSegment) {
+  if (pszName == nullptr || pszSegment == nullptr || cbName != cbSegment) {
+    return false;
+  }
+
+  for (UINT32 i = 0; i < cbName; ++i) {
+    char chName = pszName[i];
+    char chSegment = pszSegment[i];
+
+    if (chName >= 'A' && chName <= 'Z') {
+      chName = static_cast<char>(chName + ('a' - 'A'));
+    }
+
+    if (chSegment >= 'A' && chSegment <= 'Z') {
+      chSegment = static_cast<char>(chSegment + ('a' - 'A'));
+    }
+
+    if (chName != chSegment) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+void SplitPathSegments(LPCSTR pszPathUtf8, UINT32 cbPathUtf8, std::vector<std::string> &rgSegments) {
+  rgSegments.clear();
+
+  if (pszPathUtf8 == nullptr || cbPathUtf8 == 0) {
+    return;
+  }
+
+  UINT32 idxStart = 0;
+  while (idxStart < cbPathUtf8 && (pszPathUtf8[idxStart] == '\\' || pszPathUtf8[idxStart] == '/')) {
+    ++idxStart;
+  }
+
+  while (idxStart < cbPathUtf8) {
+    UINT32 idxEnd = idxStart;
+    while (idxEnd < cbPathUtf8 && pszPathUtf8[idxEnd] != '\\' && pszPathUtf8[idxEnd] != '/') {
+      ++idxEnd;
+    }
+
+    if (idxEnd > idxStart) {
+      rgSegments.emplace_back(pszPathUtf8 + idxStart, idxEnd - idxStart);
+    }
+
+    idxStart = idxEnd + 1;
+  }
+}
+
+WCHAR ToUpperDriveLetter(WCHAR wchDrive) {
+  if (wchDrive >= L'a' && wchDrive <= L'z') {
+    return static_cast<WCHAR>(wchDrive - (L'a' - L'A'));
+  }
+
+  return wchDrive;
 }
 
 } // namespace
@@ -245,6 +307,184 @@ bool CIndexStore::NodeMatchesQuery(UINT32 nodeId, const CQueryMatcher &matcher) 
 
   const char *pszName = m_pNamePool->GetPtr(node.m_nameOffset);
   return matcher.MatchesFilename(pszName, node.m_cbName);
+}
+
+void CIndexStore::ResolveParsedQuery(WCHAR wchVolumeDrive, CParsedQuery &plan) const {
+  const bool bHasPathRestriction = plan.m_wchPathDrive != L'\0' || !plan.m_rgPathUtf8.empty();
+
+  if (!bHasPathRestriction) {
+    plan.m_pathScope = PATH_SCOPE_ENTIRE_VOLUME;
+    return;
+  }
+
+  if (plan.m_wchPathDrive != L'\0' && ToUpperDriveLetter(plan.m_wchPathDrive) != ToUpperDriveLetter(wchVolumeDrive)) {
+    plan.m_pathScope = PATH_SCOPE_NONE;
+    plan.m_subtreeRootNodeId = INDEX_INVALID_NODE;
+    return;
+  }
+
+  if (plan.m_rgPathUtf8.empty()) {
+    plan.m_pathScope = PATH_SCOPE_ENTIRE_VOLUME;
+    plan.m_subtreeRootNodeId = INDEX_INVALID_NODE;
+    plan.m_bSubtreeIncludesDescendants = true;
+    return;
+  }
+
+  std::vector<std::string> rgSegments;
+  SplitPathSegments(plan.m_rgPathUtf8.data(), static_cast<UINT32>(plan.m_rgPathUtf8.size()), rgSegments);
+
+  if (rgSegments.empty()) {
+    plan.m_pathScope = PATH_SCOPE_ENTIRE_VOLUME;
+    plan.m_subtreeRootNodeId = INDEX_INVALID_NODE;
+    plan.m_bSubtreeIncludesDescendants = true;
+    return;
+  }
+
+  UINT32 parentId = INDEX_ROOT_PARENT;
+
+  for (const std::string &strSegment : rgSegments) {
+    UINT32 matchedNodeId = INDEX_INVALID_NODE;
+
+    for (UINT32 nodeId = 0; nodeId < static_cast<UINT32>(m_rgNodes.size()); ++nodeId) {
+      const INDEX_NODE &node = m_rgNodes[nodeId];
+      if ((node.m_flags & INDEX_NODE_DELETED) != 0 || node.m_cbName == 0) {
+        continue;
+      }
+
+      if (node.m_parentNodeId != parentId) {
+        continue;
+      }
+
+      const char *pszName = m_pNamePool->GetPtr(node.m_nameOffset);
+      if (SegmentEqualsIgnoreCase(pszName, node.m_cbName, strSegment.data(), static_cast<UINT32>(strSegment.size()))) {
+        matchedNodeId = nodeId;
+        break;
+      }
+    }
+
+    if (matchedNodeId == INDEX_INVALID_NODE) {
+      plan.m_pathScope = PATH_SCOPE_NONE;
+      plan.m_subtreeRootNodeId = INDEX_INVALID_NODE;
+      return;
+    }
+
+    parentId = matchedNodeId;
+  }
+
+  plan.m_pathScope = PATH_SCOPE_SUBTREE;
+  plan.m_subtreeRootNodeId = parentId;
+  plan.m_bSubtreeIncludesDescendants = (m_rgNodes[parentId].m_flags & INDEX_NODE_DIRECTORY) != 0;
+}
+
+bool CIndexStore::IsNodeInSubtree(UINT32 nodeId, const CParsedQuery &plan) const {
+  switch (plan.m_pathScope) {
+  case PATH_SCOPE_ENTIRE_VOLUME:
+    return true;
+  case PATH_SCOPE_NONE:
+    return false;
+  case PATH_SCOPE_SUBTREE:
+    break;
+  }
+
+  if (nodeId >= m_rgNodes.size() || plan.m_subtreeRootNodeId >= m_rgNodes.size()) {
+    return false;
+  }
+
+  if (nodeId == plan.m_subtreeRootNodeId) {
+    return true;
+  }
+
+  if (!plan.m_bSubtreeIncludesDescendants) {
+    return false;
+  }
+
+  UINT32 currentId = nodeId;
+  for (UINT32 depth = 0; depth < 512; ++depth) {
+    if (currentId >= m_rgNodes.size()) {
+      return false;
+    }
+
+    const INDEX_NODE &node = m_rgNodes[currentId];
+    if (node.m_parentNodeId == plan.m_subtreeRootNodeId) {
+      return true;
+    }
+
+    if (node.m_parentNodeId == INDEX_ROOT_PARENT || node.m_parentNodeId == INDEX_INVALID_NODE) {
+      return false;
+    }
+
+    currentId = node.m_parentNodeId;
+  }
+
+  return false;
+}
+
+bool CIndexStore::NodeMatchesParsedQuery(UINT32 nodeId, const CParsedQuery &plan) const {
+  if (!IsNodeInSubtree(nodeId, plan)) {
+    return false;
+  }
+
+  if (!plan.m_bHasFilenameFilter) {
+    if (nodeId >= m_rgNodes.size()) {
+      return false;
+    }
+
+    const INDEX_NODE &node = m_rgNodes[nodeId];
+    return (node.m_flags & INDEX_NODE_DELETED) == 0 && node.m_cbName > 0;
+  }
+
+  return NodeMatchesQuery(nodeId, plan.m_filenameMatcher);
+}
+
+bool CIndexStore::MaterializePathUtf8(UINT32 nodeId, std::vector<char> &rgPathUtf8) const {
+  rgPathUtf8.clear();
+
+  if (nodeId >= m_rgNodes.size()) {
+    return false;
+  }
+
+  struct SEGMENT {
+    const char *m_psz;
+    UINT16 m_cb;
+  };
+
+  std::vector<SEGMENT> rgSegments;
+  UINT32 currentId = nodeId;
+
+  for (UINT32 depth = 0; depth < 512; ++depth) {
+    if (currentId >= m_rgNodes.size()) {
+      return false;
+    }
+
+    const INDEX_NODE &node = m_rgNodes[currentId];
+    if ((node.m_flags & INDEX_NODE_DELETED) != 0) {
+      return false;
+    }
+
+    if (node.m_cbName > 0) {
+      rgSegments.push_back({m_pNamePool->GetPtr(node.m_nameOffset), node.m_cbName});
+    }
+
+    if (node.m_parentNodeId == INDEX_ROOT_PARENT || node.m_parentNodeId == INDEX_INVALID_NODE) {
+      break;
+    }
+
+    currentId = node.m_parentNodeId;
+  }
+
+  if (rgSegments.empty()) {
+    return false;
+  }
+
+  for (auto it = rgSegments.rbegin(); it != rgSegments.rend(); ++it) {
+    if (!rgPathUtf8.empty()) {
+      rgPathUtf8.push_back('\\');
+    }
+
+    rgPathUtf8.insert(rgPathUtf8.end(), it->m_psz, it->m_psz + it->m_cb);
+  }
+
+  return true;
 }
 
 INDEX_STATS CIndexStore::GetStats() const {

@@ -5,6 +5,7 @@ set(EVERYTHING_CORE_SOURCES
     index/bump_string_pool.cpp
     index/index_store.cpp
     index/query_matcher.cpp
+    index/query_parser.cpp
     index/utf8_convert.cpp
     ntfs/ntfs_volume_handle.cpp
     ntfs/usn_enumerator.cpp

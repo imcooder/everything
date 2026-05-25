@@ -3,10 +3,9 @@
 #include <cstdio>
 #include <memory>
 #include <set>
+#include <vector>
 
 namespace {
-
-std::atomic<DWORD> g_dwJournalRecords(0);
 
 void OnVolumeError(DWORD dwError, LPCWSTR wszMessage) {
   wprintf(L"[error %u] %s\n", dwError, wszMessage != nullptr ? wszMessage : L"");
@@ -16,41 +15,57 @@ void PrintIndexStats(WCHAR wchDrive, const index::INDEX_STATS &stats) {
   wprintf(L"  %c: index nodes=%u search=%u pool=%u KB / %u KB unresolved=%u\n", wchDrive, stats.m_cNodes, stats.m_cSearchEntries, stats.m_cbPoolUsed / 1024, stats.m_cbPoolAllocated / 1024, stats.m_cUnresolvedParents);
 }
 
+// Sample sink for SearchAllAsync. Coordinator serializes callbacks; path materialization in
+// OnAdded runs on the matching volume I/O thread (required by CVolume::MaterializeFullPathUtf8).
 class CSampleSearchSink : public volume::ISearchSink {
 public:
+  explicit CSampleSearchSink(volume::CVolumeManager *pManager) : m_pManager(pManager) {}
+
   bool IsCancelled(volume::SEARCH_REQUEST_ID ullRequestId) const override {
     UNREFERENCED_PARAMETER(ullRequestId);
     return false;
   }
 
-  void OnBatch(volume::SEARCH_REQUEST_ID ullRequestId, const UINT32 *rgNodeIds, UINT32 cNodeIds) override {
+  void OnBatch(volume::SEARCH_REQUEST_ID ullRequestId, WCHAR wchDriveLetter, const UINT32 *rgNodeIds, UINT32 cNodeIds) override {
     UNREFERENCED_PARAMETER(rgNodeIds);
     m_ullRequestId = ullRequestId;
     m_cHits += cNodeIds;
-    wprintf(L"  [%llu] batch: +%u (total %u)\n", static_cast<unsigned long long>(ullRequestId), cNodeIds, m_cHits);
+    wprintf(L"  [%llu] %c: batch +%u (total %u)\n", static_cast<unsigned long long>(ullRequestId), wchDriveLetter, cNodeIds, m_cHits);
   }
 
-  void OnInitialScanComplete(volume::SEARCH_REQUEST_ID ullRequestId) override {
-    wprintf(L"  [%llu] initial scan complete — live updates active (total %u)\n", static_cast<unsigned long long>(ullRequestId), m_cHits);
+  void OnInitialScanComplete(volume::SEARCH_REQUEST_ID ullRequestId, WCHAR wchDriveLetter) override {
+    wprintf(L"  [%llu] %c: initial scan complete (total %u)\n", static_cast<unsigned long long>(ullRequestId), wchDriveLetter, m_cHits);
   }
 
-  void OnAdded(volume::SEARCH_REQUEST_ID ullRequestId, UINT32 nodeId) override {
+  void OnAdded(volume::SEARCH_REQUEST_ID ullRequestId, WCHAR wchDriveLetter, UINT32 nodeId) override {
     ++m_cHits;
-    wprintf(L"  [%llu] +added node=%u (total %u)\n", static_cast<unsigned long long>(ullRequestId), nodeId, m_cHits);
+
+    // Safe: coordinator delivers this on the source volume's I/O thread.
+    if (volume::CVolume *pVolume = m_pManager->GetVolume(wchDriveLetter)) {
+      std::vector<char> rgPath;
+      if (pVolume->MaterializeFullPathUtf8(nodeId, rgPath)) {
+        rgPath.push_back('\0');
+        wprintf(L"  [%llu] %c: +added %hs (total %u)\n", static_cast<unsigned long long>(ullRequestId), wchDriveLetter, rgPath.data(), m_cHits);
+        return;
+      }
+    }
+
+    wprintf(L"  [%llu] %c: +added node=%u (total %u)\n", static_cast<unsigned long long>(ullRequestId), wchDriveLetter, nodeId, m_cHits);
   }
 
-  void OnRemoved(volume::SEARCH_REQUEST_ID ullRequestId, UINT32 nodeId) override {
+  void OnRemoved(volume::SEARCH_REQUEST_ID ullRequestId, WCHAR wchDriveLetter, UINT32 nodeId) override {
     if (m_cHits > 0) {
       --m_cHits;
     }
-    wprintf(L"  [%llu] -removed node=%u (total %u)\n", static_cast<unsigned long long>(ullRequestId), nodeId, m_cHits);
+    wprintf(L"  [%llu] %c: -removed node=%u (total %u)\n", static_cast<unsigned long long>(ullRequestId), wchDriveLetter, nodeId, m_cHits);
   }
 
   void OnComplete(volume::SEARCH_REQUEST_ID ullRequestId, bool bCancelled) override {
-    wprintf(L"  [%llu] session end: cancelled=%d total=%u\n", static_cast<unsigned long long>(ullRequestId), bCancelled ? 1 : 0, m_cHits);
+    wprintf(L"  [%llu] all volumes done: cancelled=%d total=%u\n", static_cast<unsigned long long>(ullRequestId), bCancelled ? 1 : 0, m_cHits);
   }
 
 private:
+  volume::CVolumeManager *m_pManager;
   volume::SEARCH_REQUEST_ID m_ullRequestId = volume::SEARCH_REQUEST_ID_INVALID;
   UINT32 m_cHits = 0;
 };
@@ -113,22 +128,18 @@ int wmain(int argc, wchar_t *argv[]) {
   wprintf(L"\nStarting USN journal monitors (non-blocking, interleaved with search)...\n");
   manager.StartMonitorAllAsync();
 
-  if (!letters.empty()) {
-    volume::CVolume *pFirst = manager.GetVolume(letters.front());
-    if (pFirst != nullptr && pFirst->IsReadyForSearch()) {
-      wprintf(L"\nLive search on %c: glob \"*.dll\" (results update while monitoring)\n", letters.front());
-      pFirst->SearchAsync(1, L"*.dll", std::make_shared<CSampleSearchSink>());
+  wprintf(L"\nLive search all volumes: path + glob (override with argv[1])\n");
+  LPCWSTR wszSearchQuery = (argc > 1 && argv[1] != nullptr && argv[1][0] != L'\0') ? argv[1] : L"parent:c:\\Windows *.dll";
+  wprintf(L"  query: %s\n", wszSearchQuery);
+  manager.SearchAllAsync(1, wszSearchQuery, std::make_shared<CSampleSearchSink>(&manager));
 
-      for (int i = 0; i < 15; ++i) {
-        Sleep(1000);
-        wprintf(L"  waiting for USN-driven live updates... %d/15\r", i + 1);
-      }
-      wprintf(L"\n");
-
-      pFirst->CancelSearch(1);
-    }
+  for (int i = 0; i < 15; ++i) {
+    Sleep(1000);
+    wprintf(L"  waiting for USN-driven live updates... %d/15\r", i + 1);
   }
+  wprintf(L"\n");
 
+  manager.CancelSearchAll(1);
   manager.StopAllAndWait();
   wprintf(L"Done.\n");
   return 0;

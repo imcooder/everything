@@ -38,6 +38,10 @@ public:
   CVolume *GetVolume(WCHAR wchDriveLetter);
   std::vector<WCHAR> GetDriveLetters() const;
 
+  // Live search on every ready volume. Callbacks to pSink are serialized (never concurrent).
+  void SearchAllAsync(SEARCH_REQUEST_ID ullRequestId, LPCWSTR wszQuery, std::shared_ptr<ISearchSink> pSink);
+  void CancelSearchAll(SEARCH_REQUEST_ID ullRequestId);
+
 private:
   bool ShouldIncludeDrive(WCHAR wchDriveLetter) const;
   void ApplyCallbacks(CVolume &volume) const;
