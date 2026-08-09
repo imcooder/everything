@@ -23,8 +23,7 @@ std::wstring Utf8ToWide(const char *pszUtf8) {
 
 } // namespace
 
-CUiSearchSink::CUiSearchSink(HWND hWndTarget, volume::CVolumeManager *pManager, std::shared_ptr<std::atomic<volume::SEARCH_REQUEST_ID>> pActiveRequestId)
-    : m_hWndTarget(hWndTarget), m_pManager(pManager), m_pActiveRequestId(std::move(pActiveRequestId)) {}
+CUiSearchSink::CUiSearchSink(HWND hWndTarget, volume::CVolumeManager *pManager, std::shared_ptr<std::atomic<volume::SEARCH_REQUEST_ID>> pActiveRequestId) : m_hWndTarget(hWndTarget), m_pManager(pManager), m_pActiveRequestId(std::move(pActiveRequestId)) {}
 
 bool CUiSearchSink::IsCancelled(volume::SEARCH_REQUEST_ID ullRequestId) const {
   if (m_pActiveRequestId == nullptr) {

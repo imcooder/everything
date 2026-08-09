@@ -26,6 +26,7 @@ class CMainFrame : public CFrameWindowImpl<CMainFrame> {
 public:
   DECLARE_WND_CLASS_EX(_T("Everything.Clone.MainFrame"), CS_HREDRAW | CS_VREDRAW, COLOR_WINDOW)
 
+  // clang-format off
   BEGIN_MSG_MAP(CMainFrame)
     MSG_WM_CREATE(OnCreate)
     MESSAGE_HANDLER(WM_DESTROY, OnDestroyMsg)
@@ -43,6 +44,7 @@ public:
     NOTIFY_HANDLER(IDC_LIST_RESULTS, NM_DBLCLK, OnListDblClick)
     NOTIFY_HANDLER(IDC_LIST_RESULTS, NM_RETURN, OnListEnterKey)
   END_MSG_MAP()
+  // clang-format on
 
   enum { IDC_EDIT_SEARCH = 1001, IDC_LIST_RESULTS = 1002 };
 
