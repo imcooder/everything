@@ -73,6 +73,16 @@ public:
     }
   }
 
+  void OnUpdated(SEARCH_REQUEST_ID ullRequestId, WCHAR wchDriveLetter, UINT32 nodeId) override {
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    if (m_pInner != nullptr) {
+
+      m_pInner->OnUpdated(ullRequestId, wchDriveLetter, nodeId);
+    }
+  }
+
   void OnComplete(SEARCH_REQUEST_ID ullRequestId, bool bCancelled) override {
 
     if (bCancelled) {

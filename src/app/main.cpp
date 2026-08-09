@@ -60,6 +60,10 @@ public:
     wprintf(L"  [%llu] %c: -removed node=%u (total %u)\n", static_cast<unsigned long long>(ullRequestId), wchDriveLetter, nodeId, m_cHits);
   }
 
+  void OnUpdated(volume::SEARCH_REQUEST_ID ullRequestId, WCHAR wchDriveLetter, UINT32 nodeId) override {
+    wprintf(L"  [%llu] %c: ~updated node=%u (total %u)\n", static_cast<unsigned long long>(ullRequestId), wchDriveLetter, nodeId, m_cHits);
+  }
+
   void OnComplete(volume::SEARCH_REQUEST_ID ullRequestId, bool bCancelled) override {
     wprintf(L"  [%llu] all volumes done: cancelled=%d total=%u\n", static_cast<unsigned long long>(ullRequestId), bCancelled ? 1 : 0, m_cHits);
   }

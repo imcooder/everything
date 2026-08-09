@@ -8,5 +8,6 @@
 *.suo
 /build/
 /out/
+/vcpkg/
 /vcpkg_installed/
 /node_modules/

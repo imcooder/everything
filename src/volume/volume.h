@@ -79,7 +79,7 @@ private:
   void StartLiveSearch(SEARCH_REQUEST_ID ullRequestId, LPCWSTR wszQuery, const std::shared_ptr<ISearchSink> &pSink);
   void PostScanChunk();
   void RunScanChunk();
-  void UpdateLiveSearchForNode(UINT32 nodeId);
+  void UpdateLiveSearchForNode(UINT32 nodeId, DWORD dwUsnReason);
   void FinishLiveSearch(bool bCancelled);
   void FinishSearch(SEARCH_REQUEST_ID ullRequestId, const std::shared_ptr<ISearchSink> &pSink, bool bCancelled);
   bool ShouldStopSearch(SEARCH_REQUEST_ID ullRequestId, const ISearchSink *pSink) const;

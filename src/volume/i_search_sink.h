@@ -49,6 +49,12 @@ public:
 
   virtual void OnRemoved(SEARCH_REQUEST_ID ullRequestId, WCHAR wchDriveLetter, UINT32 nodeId) = 0;
 
+  // A node already in the result set was renamed but still matches (e.g. delta-a.txt ->
+  // delta-b.txt while searching "delta"). Neither OnAdded nor OnRemoved fires for this case
+  // since set membership did not change; sinks that cache display strings per node must
+  // refresh them here to avoid showing the stale name.
+  virtual void OnUpdated(SEARCH_REQUEST_ID ullRequestId, WCHAR wchDriveLetter, UINT32 nodeId) = 0;
+
   virtual void OnComplete(SEARCH_REQUEST_ID ullRequestId, bool bCancelled) = 0;
 };
 

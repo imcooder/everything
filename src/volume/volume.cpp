@@ -325,7 +325,7 @@ void CVolume::RunScanChunk() {
   PostScanChunk();
 }
 
-void CVolume::UpdateLiveSearchForNode(UINT32 nodeId) {
+void CVolume::UpdateLiveSearchForNode(UINT32 nodeId, DWORD dwUsnReason) {
   if (!m_bLiveSearchActive || m_liveSearch.m_phase != LIVE_SEARCH_PHASE_LIVE) {
     return;
   }
@@ -362,6 +362,15 @@ void CVolume::UpdateLiveSearchForNode(UINT32 nodeId) {
     if (pSink != nullptr) {
       pSink->OnRemoved(ullRequestId, m_wchDriveLetter, nodeId);
     }
+    return;
+  }
+
+  // Still matches, still in the result set: a rename that keeps the node matching (e.g.
+  // delta-a.txt -> delta-b.txt while searching "delta") changes neither membership nor hit
+  // count, so neither branch above fires. Tell the sink to refresh any cached display text
+  // for this node so the UI doesn't keep showing the pre-rename name.
+  if (bMatches && bInResults && pSink != nullptr && (dwUsnReason & (USN_REASON_RENAME_NEW_NAME | USN_REASON_RENAME_OLD_NAME)) != 0) {
+    pSink->OnUpdated(ullRequestId, m_wchDriveLetter, nodeId);
   }
 }
 
@@ -404,7 +413,7 @@ void CVolume::OnUsnRecord(const USN_RECORD_V2 &record) {
   m_index.ApplyUsnRecord(record, &change);
 
   if (change.m_nodeId != index::INDEX_INVALID_NODE) {
-    UpdateLiveSearchForNode(change.m_nodeId);
+    UpdateLiveSearchForNode(change.m_nodeId, record.Reason);
   }
 
   if (m_fnRecord) {
