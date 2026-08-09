@@ -43,6 +43,21 @@ already-open result list without touching the search box again.
 | UI13 | Directory rename cascades | Rename a directory that contains a matching file, when query also matches path (e.g. `parent:` style) | Affected rows' displayed path updates to reflect the new parent name — verify no dangling/stale path in the list. |
 | UI14 | Rapid create+delete (churn) | Script-create and immediately delete 20 files matching the query in a loop | List settles to the correct final state (no leaked rows, no crash, no duplicate rows) after churn stops. |
 
+## Scale (virtual list, multi-volume load)
+
+The result list MUST use ListView virtual mode (`LVS_OWNERDATA` +
+`LVN_GETDISPINFO`), never per-row `InsertItem` — a real machine can have
+several million to tens of millions of indexed files, and each fixed volume
+loads on its own dedicated I/O thread (already implemented in
+`CVolumeManager`/`CVolume` — the UI layer must not introduce a second,
+UI-thread-serialized load path).
+
+| ID | Case | Steps | Expected |
+|----|------|-------|----------|
+| UI18 | Empty-query full listing at scale | On a volume with 1M+ entries, clear the search box | List reports the true count in the status bar and scrolls smoothly (no per-row allocation stall, no OOM) — confirms virtual mode, not `InsertItem` per row. |
+| UI19 | Startup with multiple volumes | Machine has 2+ fixed NTFS volumes attached | Volumes load concurrently (overlapping progress, not one after another) — confirms the UI didn't collapse the existing one-thread-per-volume load into a single serialized path. |
+| UI20 | Memory sanity at scale | Load a volume with several million entries | Process working set stays in the "compact node + string pool" ballpark described in README §Index Memory — not multiplied by a redundant UI-side copy of every path string. |
+
 ## Threading / stability
 
 | ID | Case | Steps | Expected |
