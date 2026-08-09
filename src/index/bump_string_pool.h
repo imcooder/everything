@@ -31,7 +31,8 @@ private:
   UINT32 m_cbChunkSize;
   std::vector<CHUNK> m_rgChunks;
   UINT32 m_cbTotalAllocated;
-  UINT32 m_cbTotalUsed;
+  UINT32 m_cbTotalUsed;   // physical bytes written, including per-string NUL terminators; drives offset numbering
+  UINT32 m_cbLogicalUsed; // sum of caller-provided string lengths, excludes terminators (GetUsedBytes())
   UINT32 m_cbDead;
 };
 

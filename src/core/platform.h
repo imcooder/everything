@@ -8,6 +8,7 @@
 #include <winioctl.h>
 
 #include <cstdint>
+#include <cstdio>
 
 namespace core {
 

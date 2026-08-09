@@ -21,7 +21,7 @@ bool CIoService::Start(LPCWSTR wszThreadName) {
     m_wszThreadName[0] = L'\0';
   }
 
-  m_pWork = std::make_unique<boost::asio::io_context::work>(m_ioContext);
+  m_pWork = std::make_unique<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>(boost::asio::make_work_guard(m_ioContext));
   m_bRunning = true;
   m_thread = std::thread(&CIoService::RunLoop, this);
   return true;

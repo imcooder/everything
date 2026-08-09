@@ -107,8 +107,9 @@ bool CIndexStore::ApplyUsnRecord(const USN_RECORD_V2 &record, INDEX_USN_CHANGE *
   }
 
   const LPCWSTR wszName = reinterpret_cast<LPCWSTR>(reinterpret_cast<const BYTE *>(&record) + record.FileNameOffset);
+  const USHORT cchName = static_cast<USHORT>(record.FileNameLength / sizeof(WCHAR));
 
-  if (IsDotName(wszName, record.FileNameLength)) {
+  if (IsDotName(wszName, cchName)) {
     return false;
   }
 
@@ -136,13 +137,14 @@ void CIndexStore::FinalizeInitialLoad() {
 
 bool CIndexStore::UpsertFromRecord(const USN_RECORD_V2 &record, INDEX_USN_CHANGE *pChange) {
   const LPCWSTR wszName = reinterpret_cast<LPCWSTR>(reinterpret_cast<const BYTE *>(&record) + record.FileNameOffset);
+  const USHORT cchName = static_cast<USHORT>(record.FileNameLength / sizeof(WCHAR));
 
-  if (IsDotName(wszName, record.FileNameLength)) {
+  if (IsDotName(wszName, cchName)) {
     return false;
   }
 
   std::vector<char> rgUtf8;
-  if (!WideNameToUtf8(wszName, record.FileNameLength, rgUtf8)) {
+  if (!WideNameToUtf8(wszName, cchName, rgUtf8)) {
     return false;
   }
 

@@ -101,7 +101,7 @@ USN_POLL_STATUS CUsnJournalMonitor::PollOnce() {
     return USN_POLL_IDLE;
   }
 
-  PUSN pNextUsn = reinterpret_cast<PUSN>(rgBuffer);
+  USN *pNextUsn = reinterpret_cast<USN *>(rgBuffer);
   m_usnReadCursor = *pNextUsn;
 
   PUSN_RECORD_V2 pRecord = reinterpret_cast<PUSN_RECORD_V2>(rgBuffer + sizeof(USN));

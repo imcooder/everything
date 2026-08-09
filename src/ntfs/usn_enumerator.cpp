@@ -56,7 +56,7 @@ BOOL CUsnEnumerator::EnumerateFrom(USN usnStartFrn) {
       break;
     }
 
-    enumData.StartFileReferenceNumber = *reinterpret_cast<PUSN>(rgBuffer);
+    enumData.StartFileReferenceNumber = *reinterpret_cast<USN *>(rgBuffer);
     PUSN_RECORD_V2 pRecord = reinterpret_cast<PUSN_RECORD_V2>(rgBuffer + sizeof(USN));
 
     while (reinterpret_cast<PBYTE>(pRecord) < rgBuffer + dwReturned) {

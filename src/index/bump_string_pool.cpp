@@ -4,7 +4,7 @@
 
 namespace index {
 
-CBumpStringPool::CBumpStringPool(UINT32 cbChunkSize) : m_cbChunkSize(cbChunkSize), m_cbTotalAllocated(0), m_cbTotalUsed(0), m_cbDead(0) {}
+CBumpStringPool::CBumpStringPool(UINT32 cbChunkSize) : m_cbChunkSize(cbChunkSize), m_cbTotalAllocated(0), m_cbTotalUsed(0), m_cbLogicalUsed(0), m_cbDead(0) {}
 
 UINT32 CBumpStringPool::Alloc(const char *pszUtf8, UINT32 cbLen) {
   if (pszUtf8 == nullptr || cbLen == 0) {
@@ -31,7 +31,7 @@ const char *CBumpStringPool::GetPtr(UINT32 offset) const {
 }
 
 UINT32 CBumpStringPool::GetUsedBytes() const {
-  return m_cbTotalUsed;
+  return m_cbLogicalUsed;
 }
 
 UINT32 CBumpStringPool::GetAllocatedBytes() const {
@@ -42,6 +42,7 @@ void CBumpStringPool::Reset() {
   m_rgChunks.clear();
   m_cbTotalAllocated = 0;
   m_cbTotalUsed = 0;
+  m_cbLogicalUsed = 0;
   m_cbDead = 0;
 }
 
@@ -59,9 +60,13 @@ float CBumpStringPool::GetDeadRatio() const {
 }
 
 UINT32 CBumpStringPool::AllocFromChunk(const char *pszUtf8, UINT32 cbLen) {
+  // Reserve a trailing NUL after each string so GetPtr() (offset-only) always
+  // returns a valid, correctly-bounded C string instead of running into the
+  // next allocation's bytes.
+  const UINT32 cbPhysical = cbLen + 1;
   const UINT32 offset = m_cbTotalUsed;
 
-  if (m_rgChunks.empty() || m_rgChunks.back().m_cbUsed + cbLen > m_cbChunkSize) {
+  if (m_rgChunks.empty() || m_rgChunks.back().m_cbUsed + cbPhysical > m_cbChunkSize) {
     CHUNK chunk;
     chunk.m_data.resize(m_cbChunkSize);
     chunk.m_cbUsed = 0;
@@ -71,8 +76,10 @@ UINT32 CBumpStringPool::AllocFromChunk(const char *pszUtf8, UINT32 cbLen) {
 
   CHUNK &chunk = m_rgChunks.back();
   memcpy(chunk.m_data.data() + chunk.m_cbUsed, pszUtf8, cbLen);
-  chunk.m_cbUsed += cbLen;
-  m_cbTotalUsed += cbLen;
+  chunk.m_data[chunk.m_cbUsed + cbLen] = '\0';
+  chunk.m_cbUsed += cbPhysical;
+  m_cbTotalUsed += cbPhysical;
+  m_cbLogicalUsed += cbLen;
 
   return offset;
 }

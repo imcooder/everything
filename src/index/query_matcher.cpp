@@ -70,7 +70,7 @@ bool CQueryMatcher::MatchesGlob(const char *pszName, UINT32 cbName) const {
     }
 
     if (pszStr >= pszStrEnd || *pszStr != *pszPattern) {
-      if (pszPatStar == nullptr) {
+      if (pszPatStar == nullptr || pszStrStar >= pszStrEnd) {
         return false;
       }
       pszPattern = pszPatStar;

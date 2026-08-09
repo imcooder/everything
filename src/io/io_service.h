@@ -1,6 +1,8 @@
 #pragma once
 
+#include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/post.hpp>
 
 #include <atomic>
 #include <functional>
@@ -34,7 +36,7 @@ private:
   void RunLoop();
 
   boost::asio::io_context m_ioContext;
-  std::unique_ptr<boost::asio::io_context::work> m_pWork;
+  std::unique_ptr<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>> m_pWork;
   std::thread m_thread;
   std::atomic<bool> m_bRunning;
   WCHAR m_wszThreadName[64];

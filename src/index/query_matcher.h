@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/platform.h"
+
 #include <string>
 #include <vector>
 

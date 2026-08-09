@@ -11,16 +11,14 @@
 #include "volume/i_search_sink.h"
 #include "volume/search_types.h"
 
+#include <boost/asio/steady_timer.hpp>
+
 #include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
 #include <unordered_set>
 #include <vector>
-
-namespace boost::asio {
-class steady_timer;
-}
 
 namespace volume {
 
