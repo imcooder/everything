@@ -50,6 +50,14 @@ public:
 
   ~CMainFrame();
 
+  // Test-only: exposes the active search request id so an in-process integration test can post
+  // synthetic WM_APP_SEARCH_* messages (see tests/ui_live_update_integration.cpp) that pass the
+  // same staleness check real CUiSearchSink-originated messages go through. Not used by
+  // production code paths.
+  volume::SEARCH_REQUEST_ID GetCurrentRequestIdForTesting() const {
+    return m_ullCurrentRequestId;
+  }
+
 private:
   LRESULT OnCreate(LPCREATESTRUCT lpCreateStruct);
   LRESULT OnDestroyMsg(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
