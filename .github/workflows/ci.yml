@@ -30,6 +30,30 @@ jobs:
 
       - run: npm run ci:format
 
+  commit-lint:
+    name: commit-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Resolve commit range base
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "COMMIT_LINT_BASE=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_ENV"
+          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            echo "COMMIT_LINT_BASE=${{ github.event.before }}" >> "$GITHUB_ENV"
+          else
+            echo "COMMIT_LINT_BASE=HEAD~1" >> "$GITHUB_ENV"
+          fi
+
+      - run: npm run ci:commit-lint
+
   build:
     name: build
     runs-on: windows-latest

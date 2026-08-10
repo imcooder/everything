@@ -12,6 +12,7 @@
     "prepare": "node scripts/install-git-hooks.mjs",
     "protect:branch": "node scripts/apply-branch-protection.mjs",
     "ci:format": "node scripts/ci/format.mjs",
+    "ci:commit-lint": "node scripts/ci/check-commit-messages.mjs",
     "ci:build": "node scripts/ci/build.mjs",
     "ci:test": "node scripts/ci/test.mjs",
     "ci:package-release": "node scripts/ci/package-release.mjs",
