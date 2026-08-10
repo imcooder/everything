@@ -114,3 +114,60 @@ jobs:
           key: build-${{ hashFiles('src/**', 'tests/**', 'CMakeLists.txt', 'vcpkg.json', 'package.json') }}
 
       - run: npm run ci:test
+
+  release:
+    name: release
+    needs: [format, commit-lint, build, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/bincache
+            vcpkg/downloads
+            vcpkg/installed
+            vcpkg/packages
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-
+
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: build-${{ hashFiles('src/**', 'tests/**', 'CMakeLists.txt', 'vcpkg.json', 'package.json') }}
+
+      - name: Build release binaries
+        run: npm run build:release
+
+      - name: Package release archive
+        run: npm run ci:package-release
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: echo "version=$(npm run --silent version | head -n1)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "Everything $TAG" \
+            --notes "Automated build from main @ ${{ github.sha }}." \
+            --prerelease \
+            output/release/*.zip

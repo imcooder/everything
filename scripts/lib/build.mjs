@@ -90,6 +90,10 @@ export function exePath(config) {
     return path.join(paths.buildDir, "src", config, "Everything.Core.exe");
 }
 
+export function uiExePath(config) {
+    return path.join(paths.buildDir, "src", config, "Everything.UI.exe");
+}
+
 export function testExePath(config) {
     return path.join(paths.buildDir, "tests", config, "Everything.Tests.exe");
 }
