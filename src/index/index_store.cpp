@@ -11,6 +11,18 @@ namespace {
 
 constexpr ULONGLONG NTFS_ROOT_FRN = 5;
 
+// A packed NTFS file reference number is (sequence_number << 48) | segment_number (see
+// ntfs::ParseFileRecord). The root directory's segment number is always 5 (a fixed reserved MFT
+// slot, never reused), but its sequence number is whatever NTFS assigned at format time — usually
+// small but not necessarily zero. Comparing a raw parent FRN straight against the bare constant 5
+// only matches when the sequence bits also happen to be zero, which is not guaranteed on a real
+// volume; mask down to the low 48 bits (the segment number) before comparing.
+constexpr ULONGLONG FRN_SEGMENT_MASK = 0x0000FFFFFFFFFFFFull;
+
+bool IsRootParentFrn(ULONGLONG ullParentFrn) {
+  return ullParentFrn == 0 || (ullParentFrn & FRN_SEGMENT_MASK) == NTFS_ROOT_FRN;
+}
+
 bool IsDotName(LPCWSTR wszName, USHORT cchName) {
   if (cchName == 1 && wszName[0] == L'.') {
     return true;
@@ -252,7 +264,7 @@ void CIndexStore::ResolveParents() {
       continue;
     }
 
-    if (node.m_ullParentFrn == 0 || node.m_ullParentFrn == NTFS_ROOT_FRN) {
+    if (IsRootParentFrn(node.m_ullParentFrn)) {
       node.m_parentNodeId = INDEX_ROOT_PARENT;
       continue;
     }
@@ -590,7 +602,7 @@ void CIndexStore::ResolveParentForNode(UINT32 nodeId) {
 
   INDEX_NODE &node = m_rgNodes[nodeId];
 
-  if (node.m_ullParentFrn == 0 || node.m_ullParentFrn == NTFS_ROOT_FRN) {
+  if (IsRootParentFrn(node.m_ullParentFrn)) {
     node.m_parentNodeId = INDEX_ROOT_PARENT;
     return;
   }

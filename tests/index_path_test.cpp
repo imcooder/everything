@@ -96,3 +96,27 @@ TEST(IndexPath, MissingPathMatchesNothing) {
   EXPECT_EQ(plan.m_pathScope, index::PATH_SCOPE_NONE);
   EXPECT_EQ(CountMatches(store, plan), 0u);
 }
+
+// Real NTFS file reference numbers pack (sequence_number << 48) | segment_number — the root
+// directory's segment number is always 5, but its sequence number is whatever NTFS assigned at
+// format time, not necessarily 0. A root-level file's $FILE_NAME ParentDirectory field carries
+// that full packed value, not the bare constant 5. Root-parented nodes must still resolve to
+// PATH_SCOPE_SUBTREE / INDEX_ROOT_PARENT in that case (see IsRootParentFrn in index_store.cpp).
+TEST(IndexPath, RootParentWithNonZeroSequenceNumberResolves) {
+  index::CIndexStore store;
+
+  constexpr ULONGLONG kRootSegment = 5;
+  constexpr ULONGLONG kRootSequence = 7;
+  constexpr ULONGLONG kPackedRootFrn = (kRootSequence << 48) | kRootSegment;
+
+  store.BeginBulkLoad();
+  ApplyNamedRecord(store, 300, kPackedRootFrn, L"top-level.txt", FILE_ATTRIBUTE_NORMAL);
+  store.FinalizeInitialLoad();
+
+  EXPECT_EQ(store.GetStats().m_cUnresolvedParents, 0u);
+
+  index::CParsedQuery plan;
+  ASSERT_TRUE(index::ParseSearchQuery(L"top-level", plan));
+  store.ResolveParsedQuery(L'C', plan);
+  EXPECT_EQ(CountMatches(store, plan), 1u);
+}
