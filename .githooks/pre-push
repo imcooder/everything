@@ -10,8 +10,14 @@ import { fileURLToPath } from "url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function runNpm(script) {
+    // shell: true is required on Windows to invoke npm.cmd — without it, spawnSync fails with
+    // EINVAL when this hook runs from a POSIX-shell git (e.g. Git Bash/MSYS2) instead of a
+    // native Windows shell, silently turning every check below into a false "failed" result.
     const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-    const result = spawnSync(npm, ["run", script], { cwd: repoRoot, stdio: "inherit" });
+    const result = spawnSync(npm, ["run", script], { cwd: repoRoot, stdio: "inherit", shell: process.platform === "win32" });
+    if (result.error) {
+        console.error(`pre-push: failed to spawn "${npm} run ${script}": ${result.error.message}`);
+    }
     return result.status === 0;
 }
 
