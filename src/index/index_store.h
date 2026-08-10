@@ -37,6 +37,18 @@ public:
 
   INDEX_STATS GetStats() const;
 
+  // Persistence support (index::CIndexPersistence). Save() reads the node table and string pool
+  // through these read-only accessors; Load() replaces both wholesale via LoadPersistedState(),
+  // which rebuilds m_mapFrnToNodeId and m_rgSearchEntries exactly as FinalizeInitialLoad() does
+  // after a full USN enumeration, so FindNodeIdByFrn/search behave identically either way.
+  const std::vector<INDEX_NODE> &GetNodesForPersist() const {
+    return m_rgNodes;
+  }
+  const IStringPoolBackend &GetNamePoolForPersist() const {
+    return *m_pNamePool;
+  }
+  void LoadPersistedState(std::vector<INDEX_NODE> &&rgNodes, const char *pPoolBytes, UINT32 cbPoolPhysical, UINT32 cbPoolLogical);
+
 private:
   bool UpsertFromRecord(const USN_RECORD_V2 &record, INDEX_USN_CHANGE *pChange);
   void MarkDeleted(ULONGLONG ullFrn, INDEX_USN_CHANGE *pChange = nullptr);

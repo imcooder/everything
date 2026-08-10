@@ -73,6 +73,11 @@ private:
   void DoLoad();
   void DoMonitor(USN usnStart);
   void DoStop();
+
+  // Index persistence (index::CIndexPersistence). All three run on the volume I/O thread.
+  bool TryLoadPersistedIndex();
+  void PersistIndexNonFatal(const core::USN_JOURNAL_STATE &journalState, USN usnResumeCursor);
+  void PersistIndexOnShutdown();
   void DoCancelSearch(SEARCH_REQUEST_ID ullRequestId);
   void UpdateSearchSlot(SEARCH_REQUEST_ID ullRequestId, std::wstring wstrQuery, std::shared_ptr<ISearchSink> pSink);
   void TryDispatchSearch();
@@ -130,6 +135,16 @@ private:
   LIVE_SEARCH m_liveSearch;
   bool m_bUsnMonitorActive = false;
   std::unique_ptr<boost::asio::steady_timer> m_pUsnPollTimer;
+
+  // Per-volume persisted-index file (index::CIndexPersistence::BuildIndexFilePath), set once the
+  // volume serial number is known in Open(). Empty means persistence is unavailable this session
+  // (e.g. LOCALAPPDATA and %TEMP% both failed to resolve) and load/save become silent no-ops.
+  std::wstring m_wstrIndexFilePath;
+
+  // Set by TryLoadPersistedIndex() on a successful warm start; DoMonitor() falls back to this
+  // when called with usnStart == 0 (the value every current caller passes), so resuming from a
+  // persisted checkpoint requires no change to CVolumeManager/main.cpp call sites.
+  USN m_usnPersistedResumeCursor = 0;
 };
 
 } // namespace volume

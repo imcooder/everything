@@ -59,6 +59,55 @@ float CBumpStringPool::GetDeadRatio() const {
   return static_cast<float>(m_cbDead) / static_cast<float>(m_cbTotalAllocated);
 }
 
+UINT32 CBumpStringPool::ExportBytes(std::vector<char> &rgOut) const {
+  rgOut.clear();
+  rgOut.reserve(m_cbTotalUsed);
+
+  for (const CHUNK &chunk : m_rgChunks) {
+    rgOut.insert(rgOut.end(), chunk.m_data.begin(), chunk.m_data.begin() + chunk.m_cbUsed);
+  }
+
+  return static_cast<UINT32>(rgOut.size());
+}
+
+bool CBumpStringPool::ImportBytes(const char *pData, UINT32 cbPhysicalLen, UINT32 cbLogicalLen) {
+  Reset();
+
+  if (cbPhysicalLen == 0) {
+    return true;
+  }
+
+  if (pData == nullptr) {
+    return false;
+  }
+
+  // Re-chunk the flat blob into m_cbChunkSize-sized buffers, same as AllocFromChunk would have.
+  // Offsets are just cumulative sums of chunk.m_cbUsed (see GetPtr), so the exact chunk
+  // boundaries chosen here don't need to match the original session's — only the contiguous
+  // byte order does.
+  UINT32 cbRemaining = cbPhysicalLen;
+  UINT32 cbConsumed = 0;
+
+  while (cbRemaining > 0) {
+    const UINT32 cbThisChunk = cbRemaining < m_cbChunkSize ? cbRemaining : m_cbChunkSize;
+
+    CHUNK chunk;
+    chunk.m_data.resize(m_cbChunkSize);
+    memcpy(chunk.m_data.data(), pData + cbConsumed, cbThisChunk);
+    chunk.m_cbUsed = cbThisChunk;
+    m_rgChunks.push_back(std::move(chunk));
+    m_cbTotalAllocated += m_cbChunkSize;
+
+    cbConsumed += cbThisChunk;
+    cbRemaining -= cbThisChunk;
+  }
+
+  m_cbTotalUsed = cbPhysicalLen;
+  m_cbLogicalUsed = cbLogicalLen;
+  m_cbDead = 0;
+  return true;
+}
+
 UINT32 CBumpStringPool::AllocFromChunk(const char *pszUtf8, UINT32 cbLen) {
   // Reserve a trailing NUL after each string so GetPtr() (offset-only) always
   // returns a valid, correctly-bounded C string instead of running into the

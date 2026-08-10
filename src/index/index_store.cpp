@@ -499,6 +499,22 @@ INDEX_STATS CIndexStore::GetStats() const {
   return stats;
 }
 
+void CIndexStore::LoadPersistedState(std::vector<INDEX_NODE> &&rgNodes, const char *pPoolBytes, UINT32 cbPoolPhysical, UINT32 cbPoolLogical) {
+  m_rgNodes = std::move(rgNodes);
+  m_pNamePool->ImportBytes(pPoolBytes, cbPoolPhysical, cbPoolLogical);
+
+  m_mapFrnToNodeId.clear();
+  m_mapFrnToNodeId.reserve(m_rgNodes.size());
+  for (UINT32 nodeId = 0; nodeId < static_cast<UINT32>(m_rgNodes.size()); ++nodeId) {
+    m_mapFrnToNodeId.emplace(m_rgNodes[nodeId].m_ullFrn, nodeId);
+  }
+
+  m_cUnresolvedParents = 0;
+  m_bBulkLoad = false;
+  ResolveParents();
+  RebuildSearchEntries();
+}
+
 UINT32 CIndexStore::GetOrCreateNodeId(ULONGLONG ullFrn) {
   const auto it = m_mapFrnToNodeId.find(ullFrn);
   if (it != m_mapFrnToNodeId.end()) {

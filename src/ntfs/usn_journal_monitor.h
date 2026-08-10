@@ -23,6 +23,10 @@ public:
   BOOL IsRunning() const;
   USN GetCurrentUsn() const;
 
+  // Journal id/first/last/next as of the most recent StartFromUsn() query. Used to persist a
+  // resumable checkpoint (index::CIndexPersistence) without re-issuing FSCTL_QUERY_USN_JOURNAL.
+  core::USN_JOURNAL_STATE GetJournalState() const;
+
   // Non-blocking: read one journal buffer, invoke record callbacks, return status.
   USN_POLL_STATUS PollOnce();
 

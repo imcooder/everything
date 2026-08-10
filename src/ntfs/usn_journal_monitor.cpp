@@ -53,6 +53,10 @@ USN CUsnJournalMonitor::GetCurrentUsn() const {
   return m_usnReadCursor;
 }
 
+core::USN_JOURNAL_STATE CUsnJournalMonitor::GetJournalState() const {
+  return m_journalState;
+}
+
 USN_POLL_STATUS CUsnJournalMonitor::PollOnce() {
   if (m_bStopRequested) {
     m_bRunning = FALSE;

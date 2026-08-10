@@ -2,6 +2,7 @@ set(EVERYTHING_BACKEND_SOURCES
     core/ntfs_types.cpp
     io/io_service.cpp
     index/bump_string_pool.cpp
+    index/index_persistence.cpp
     index/index_store.cpp
     index/query_matcher.cpp
     index/query_parser.cpp

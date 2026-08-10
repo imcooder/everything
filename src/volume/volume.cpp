@@ -1,10 +1,12 @@
 #include "volume/volume.h"
 
+#include "index/index_persistence.h"
 #include "index/utf8_convert.h"
 
 #include <boost/asio/steady_timer.hpp>
 
 #include <chrono>
+#include <future>
 #include <thread>
 
 namespace volume {
@@ -45,6 +47,7 @@ bool CVolume::Open() {
   }
 
   m_identity.m_dwSerialNumber = m_pVolumeHandle->GetSerialNumber();
+  m_wstrIndexFilePath = index::CIndexPersistence::BuildIndexFilePath(m_identity.m_dwSerialNumber);
 
   m_enumerator.SetVolumeHandle(m_pVolumeHandle.get());
   m_monitor.SetVolumeHandle(m_pVolumeHandle.get());
@@ -111,6 +114,23 @@ void CVolume::StopAndWait() {
 
   for (int i = 0; i < 50 && m_monitor.IsRunning(); ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+
+  // Persist on a clean shutdown (P1/P2/P3's "at minimum on StopAndWait()" requirement) while the
+  // index is still valid and the volume I/O thread is still alive to own the touch, per the
+  // architecture's "no cross-thread access to index data" rule (docs/index-design.md). The
+  // promise is heap-owned via shared_ptr so a timeout here can never dangle a reference the
+  // posted lambda still holds.
+  if (m_pIoService != nullptr && IsReadyForSearch()) {
+    auto pDonePromise = std::make_shared<std::promise<void>>();
+    std::future<void> doneFuture = pDonePromise->get_future();
+
+    m_pIoService->Post([this, pDonePromise]() {
+      PersistIndexOnShutdown();
+      pDonePromise->set_value();
+    });
+
+    doneFuture.wait_for(std::chrono::seconds(5));
   }
 
   if (m_pIoService != nullptr) {
@@ -429,14 +449,38 @@ void CVolume::DoLoad() {
 
   m_state = VOLUME_STATE_ENUMERATING;
   m_dwEnumeratedCount = 0;
+  m_usnPersistedResumeCursor = 0;
+
+  // Warm start: a previously-persisted index for this exact volume (matching magic/version/serial)
+  // whose journal id still matches the volume's *current* journal and whose checkpoint hasn't
+  // fallen behind the journal's oldest retained record. Any other outcome (missing, corrupt,
+  // wrong version, wrong volume, journal reset, or a too-old checkpoint) falls through to the
+  // unchanged full FSCTL_ENUM_USN_DATA path below (P4, P5, P6).
+  if (TryLoadPersistedIndex()) {
+    m_lastIndexStats = m_index.GetStats();
+    m_state = VOLUME_STATE_READY;
+    return;
+  }
+
   m_index.Reset();
   m_index.BeginBulkLoad();
+
+  // Query the journal cursor *before* enumerating, not after: any change that lands during the
+  // (potentially long) enumeration is then guaranteed to be covered by the journal replay that
+  // resumes from this baseline, even if the enumeration snapshot missed it. Applying the same
+  // change twice is harmless (UpsertFromRecord is an idempotent upsert keyed by FRN).
+  core::USN_JOURNAL_STATE journalBaseline = {};
+  const bool bHaveBaseline = m_pVolumeHandle->QueryUsnJournalState(journalBaseline);
 
   if (m_enumerator.EnumerateAll()) {
     m_dwEnumeratedCount = m_enumerator.GetRecordCount();
     m_index.FinalizeInitialLoad();
     m_lastIndexStats = m_index.GetStats();
     m_state = VOLUME_STATE_READY;
+
+    if (bHaveBaseline) {
+      PersistIndexNonFatal(journalBaseline, journalBaseline.m_usnNext);
+    }
   } else {
     m_state = VOLUME_STATE_ERROR;
   }
@@ -448,7 +492,13 @@ void CVolume::DoMonitor(USN usnStart) {
     return;
   }
 
-  if (!m_monitor.StartFromUsn(usnStart)) {
+  // Every current caller (CVolumeManager::StartMonitorAllAsync, main.cpp) passes usnStart == 0
+  // meaning "no explicit cursor requested"; fall back to a persisted-load checkpoint if one was
+  // established this session so warm starts resume the journal instead of replaying from
+  // m_usnFirst (CUsnJournalMonitor::StartFromUsn's own 0 == "use journal's oldest" default).
+  const USN usnEffectiveStart = usnStart != 0 ? usnStart : m_usnPersistedResumeCursor;
+
+  if (!m_monitor.StartFromUsn(usnEffectiveStart)) {
     m_state = VOLUME_STATE_ERROR;
     return;
   }
@@ -520,6 +570,100 @@ std::wstring CVolume::BuildThreadName(LPCWSTR wszSuffix) const {
   name.push_back(L' ');
   name.append(wszSuffix);
   return name;
+}
+
+bool CVolume::TryLoadPersistedIndex() {
+  m_index.Reset();
+
+  if (m_wstrIndexFilePath.empty()) {
+    return false;
+  }
+
+  index::INDEX_PERSIST_CHECKPOINT checkpoint;
+  const index::INDEX_PERSIST_LOAD_RESULT result = index::CIndexPersistence::Load(m_wstrIndexFilePath, m_identity.m_dwSerialNumber, m_index, checkpoint);
+
+  if (result != index::INDEX_PERSIST_LOAD_OK) {
+    // NOT_FOUND is the expected first-run case; the rest (corrupt/version/serial mismatch) are
+    // real fallbacks worth a log line, but none of them are fatal — DoLoad() always has the full
+    // scan as a safety net.
+    if (result != index::INDEX_PERSIST_LOAD_NOT_FOUND && m_fnError) {
+      m_fnError(static_cast<DWORD>(result), L"Persisted index unusable (missing/corrupt/version/serial mismatch) — falling back to full re-scan");
+    }
+    m_index.Reset();
+    return false;
+  }
+
+  core::USN_JOURNAL_STATE currentJournal = {};
+  if (m_pVolumeHandle == nullptr || !m_pVolumeHandle->QueryUsnJournalState(currentJournal)) {
+    m_index.Reset();
+    return false;
+  }
+
+  if (currentJournal.m_ullJournalId != checkpoint.m_ullJournalId) {
+    // Journal was deleted/recreated since the last session (fsutil usn deletejournal, or NTFS
+    // recreating it itself) — the persisted USN cursor is meaningless against the new journal.
+    // Replaying against it would silently miss changes rather than error, so we must not try.
+    if (m_fnError) {
+      m_fnError(0, L"USN journal id changed since the index was persisted (journal reset) — falling back to full re-scan");
+    }
+    m_index.Reset();
+    return false;
+  }
+
+  if (checkpoint.m_usnNext < currentJournal.m_usnFirst) {
+    // The journal has pruned/overwritten everything between our checkpoint and its current
+    // oldest retained record (offline too long) — FSCTL_READ_USN_JOURNAL from usnNext would
+    // either error or silently start later than expected. Full re-scan is the safe fallback.
+    if (m_fnError) {
+      m_fnError(0, L"Persisted USN checkpoint predates the journal's oldest retained record — falling back to full re-scan");
+    }
+    m_index.Reset();
+    return false;
+  }
+
+  m_usnPersistedResumeCursor = checkpoint.m_usnNext;
+  return true;
+}
+
+void CVolume::PersistIndexNonFatal(const core::USN_JOURNAL_STATE &journalState, USN usnResumeCursor) {
+  if (m_wstrIndexFilePath.empty()) {
+    return;
+  }
+
+  index::INDEX_PERSIST_CHECKPOINT checkpoint;
+  checkpoint.m_ullJournalId = journalState.m_ullJournalId;
+  checkpoint.m_usnNext = usnResumeCursor;
+  checkpoint.m_usnFirst = journalState.m_usnFirst;
+  checkpoint.m_usnLast = journalState.m_usnLast;
+
+  // Non-fatal by design (P12): a failed write here must never stop the volume from serving
+  // search out of the in-memory index. Log via the existing error callback and move on.
+  if (!index::CIndexPersistence::Save(m_wstrIndexFilePath, m_identity.m_dwSerialNumber, m_index, checkpoint)) {
+    if (m_fnError) {
+      m_fnError(GetLastError(), L"Index persistence write failed (continuing with in-memory index only)");
+    }
+  }
+}
+
+void CVolume::PersistIndexOnShutdown() {
+  if (m_wstrIndexFilePath.empty() || !IsReadyForSearch()) {
+    return;
+  }
+
+  core::USN_JOURNAL_STATE journalState = m_monitor.GetJournalState();
+  USN usnResumeCursor = m_monitor.GetCurrentUsn();
+
+  if (journalState.m_ullJournalId == 0) {
+    // The journal monitor never ran this session (e.g. stopped right after a full load, before
+    // StartMonitorAsync was ever called) — query fresh instead of persisting a zeroed checkpoint.
+    if (m_pVolumeHandle != nullptr && m_pVolumeHandle->QueryUsnJournalState(journalState)) {
+      usnResumeCursor = journalState.m_usnNext;
+    } else {
+      return;
+    }
+  }
+
+  PersistIndexNonFatal(journalState, usnResumeCursor);
 }
 
 bool CVolume::MaterializePathUtf8(UINT32 nodeId, std::vector<char> &rgPathUtf8) const {

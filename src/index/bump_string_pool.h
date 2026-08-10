@@ -20,6 +20,9 @@ public:
   bool Compact() override;
   float GetDeadRatio() const override;
 
+  UINT32 ExportBytes(std::vector<char> &rgOut) const override;
+  bool ImportBytes(const char *pData, UINT32 cbPhysicalLen, UINT32 cbLogicalLen) override;
+
 private:
   struct CHUNK {
     std::vector<char> m_data;
