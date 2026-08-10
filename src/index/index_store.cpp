@@ -178,6 +178,54 @@ bool CIndexStore::UpsertFromRecord(const USN_RECORD_V2 &record, INDEX_USN_CHANGE
   return true;
 }
 
+bool CIndexStore::UpsertFromMftRecord(ULONGLONG ullFrn, ULONGLONG ullParentFrn, LPCWSTR wszName, USHORT cchName, bool bIsDirectory, DWORD dwAttributes) {
+  // dwAttributes (DOS/NTFS attribute flags from $STANDARD_INFORMATION) is accepted for parity
+  // with the USN ingestion shape and potential future flag mapping (hidden/system/etc.), but
+  // isDirectory is authoritative here — it comes straight from the FILE_RECORD_HEADER in-use
+  // record's own directory bit, which is more reliable than re-deriving it from an attribute
+  // flags DWORD (see ntfs::ParseFileRecord).
+  (void)dwAttributes;
+
+  if (cchName == 0 || wszName == nullptr) {
+    return false;
+  }
+
+  if (IsDotName(wszName, cchName)) {
+    return false;
+  }
+
+  std::vector<char> rgUtf8;
+  if (!WideNameToUtf8(wszName, cchName, rgUtf8)) {
+    return false;
+  }
+
+  const UINT32 nameOffset = m_pNamePool->Alloc(rgUtf8.data(), static_cast<UINT32>(rgUtf8.size()));
+  if (nameOffset == UINT32_MAX) {
+    return false;
+  }
+
+  const UINT32 nodeId = GetOrCreateNodeId(ullFrn);
+  INDEX_NODE &node = m_rgNodes[nodeId];
+
+  node.m_ullFrn = ullFrn;
+  node.m_ullParentFrn = ullParentFrn;
+  node.m_parentNodeId = INDEX_INVALID_NODE;
+  node.m_nameOffset = nameOffset;
+  node.m_cbName = static_cast<UINT16>(rgUtf8.size());
+  node.m_flags = INDEX_NODE_NONE;
+
+  if (bIsDirectory) {
+    node.m_flags |= INDEX_NODE_DIRECTORY;
+  }
+
+  ResolveParentForNode(nodeId);
+  if (!m_bBulkLoad) {
+    TouchSearchEntry(nodeId);
+  }
+
+  return true;
+}
+
 void CIndexStore::MarkDeleted(ULONGLONG ullFrn, INDEX_USN_CHANGE *pChange) {
   const UINT32 nodeId = FindNodeIdByFrn(ullFrn);
   if (nodeId == INDEX_INVALID_NODE) {

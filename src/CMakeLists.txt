@@ -7,6 +7,8 @@ set(EVERYTHING_BACKEND_SOURCES
     index/query_matcher.cpp
     index/query_parser.cpp
     index/utf8_convert.cpp
+    ntfs/mft_reader.cpp
+    ntfs/mft_record.cpp
     ntfs/ntfs_volume_handle.cpp
     ntfs/usn_enumerator.cpp
     ntfs/usn_journal_monitor.cpp

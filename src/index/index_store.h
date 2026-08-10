@@ -21,6 +21,14 @@ public:
   void Reset();
   void BeginBulkLoad();
   bool ApplyUsnRecord(const USN_RECORD_V2 &record, INDEX_USN_CHANGE *pChange = nullptr);
+
+  // Direct-MFT-read ingestion (ntfs::CMftReader): takes MFT-derived fields straight from a
+  // parsed $FILE_NAME/$STANDARD_INFORMATION pair instead of requiring a fabricated
+  // USN_RECORD_V2. Shares UpsertFromRecord's node/name-pool/parent-link mechanics; callers
+  // still finish with FinalizeInitialLoad() exactly as the USN bulk-load path does, so parent
+  // resolution and search-entry rebuilding are never duplicated between the two load paths.
+  bool UpsertFromMftRecord(ULONGLONG ullFrn, ULONGLONG ullParentFrn, LPCWSTR wszName, USHORT cchName, bool bIsDirectory, DWORD dwAttributes);
+
   void FinalizeInitialLoad();
 
   void SearchUtf8(LPCSTR pszQueryUtf8, std::vector<UINT32> &rgNodeIds, UINT32 cMaxResults) const;

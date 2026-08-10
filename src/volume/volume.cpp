@@ -463,14 +463,39 @@ void CVolume::DoLoad() {
   }
 
   m_index.Reset();
-  m_index.BeginBulkLoad();
 
-  // Query the journal cursor *before* enumerating, not after: any change that lands during the
-  // (potentially long) enumeration is then guaranteed to be covered by the journal replay that
-  // resumes from this baseline, even if the enumeration snapshot missed it. Applying the same
-  // change twice is harmless (UpsertFromRecord is an idempotent upsert keyed by FRN).
+  // Query the journal cursor *before* either initial-load path runs, not after: any change that
+  // lands during the (potentially long) load is then guaranteed to be covered by the journal
+  // replay that resumes from this baseline, even if the load snapshot missed it. Applying the
+  // same change twice is harmless (both UpsertFromRecord and UpsertFromMftRecord are idempotent
+  // upserts keyed by FRN).
   core::USN_JOURNAL_STATE journalBaseline = {};
   const bool bHaveBaseline = m_pVolumeHandle->QueryUsnJournalState(journalBaseline);
+
+  // Direct MFT read first (README §1 "Direct MFT access instead of recursive directory
+  // enumeration"); on any failure or low-confidence parse, fall back to the proven
+  // FSCTL_ENUM_USN_DATA path unchanged (M10). The fallback is automatic, not a manual toggle.
+  if (TryLoadViaMftDirectRead()) {
+    m_index.FinalizeInitialLoad();
+    m_lastIndexStats = m_index.GetStats();
+    m_state = VOLUME_STATE_READY;
+
+    if (m_fnError) {
+      m_fnError(0, L"Initial load: direct MFT read succeeded");
+    }
+
+    if (bHaveBaseline) {
+      PersistIndexNonFatal(journalBaseline, journalBaseline.m_usnNext);
+    }
+
+    return;
+  }
+
+  // TryLoadViaMftDirectRead() may have partially populated the index before hitting a failure
+  // partway through the walk — reset so the USN fallback below starts from a clean slate rather
+  // than mixing a partial MFT-derived snapshot with a full USN enumeration.
+  m_index.Reset();
+  m_index.BeginBulkLoad();
 
   if (m_enumerator.EnumerateAll()) {
     m_dwEnumeratedCount = m_enumerator.GetRecordCount();
@@ -484,6 +509,25 @@ void CVolume::DoLoad() {
   } else {
     m_state = VOLUME_STATE_ERROR;
   }
+}
+
+bool CVolume::TryLoadViaMftDirectRead() {
+  m_index.BeginBulkLoad();
+
+  ntfs::CMftReader reader;
+  reader.SetVolumeHandle(m_pVolumeHandle.get());
+  reader.SetErrorCallback(m_fnError);
+  reader.SetRecordCallback([this](ULONGLONG ullFrn, ULONGLONG ullParentFrn, LPCWSTR wszName, USHORT cchName, bool bIsDirectory, DWORD dwAttributes) { m_index.UpsertFromMftRecord(ullFrn, ullParentFrn, wszName, cchName, bIsDirectory, dwAttributes); });
+
+  if (!reader.ReadAll()) {
+    if (m_fnError) {
+      m_fnError(0, L"Direct MFT read failed or was not confident enough to trust — falling back to USN enumeration");
+    }
+    return false;
+  }
+
+  m_dwEnumeratedCount = reader.GetRecordCount();
+  return true;
 }
 
 void CVolume::DoMonitor(USN usnStart) {

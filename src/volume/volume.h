@@ -5,6 +5,7 @@
 #include "index/query_parser.h"
 #include "index/index_types.h"
 #include "io/io_service.h"
+#include "ntfs/mft_reader.h"
 #include "ntfs/ntfs_volume_handle.h"
 #include "ntfs/usn_enumerator.h"
 #include "ntfs/usn_journal_monitor.h"
@@ -73,6 +74,11 @@ private:
   void DoLoad();
   void DoMonitor(USN usnStart);
   void DoStop();
+
+  // Direct MFT read (README §1 / ntfs::CMftReader), tried before the FSCTL_ENUM_USN_DATA
+  // fallback in DoLoad(). Returns false on ANY failure (open, parse, low-confidence record
+  // count, ...) so DoLoad() can fall back to m_enumerator.EnumerateAll() automatically (M10).
+  bool TryLoadViaMftDirectRead();
 
   // Index persistence (index::CIndexPersistence). All three run on the volume I/O thread.
   bool TryLoadPersistedIndex();
