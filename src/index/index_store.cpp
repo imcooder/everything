@@ -105,6 +105,7 @@ void CIndexStore::Reset() {
   m_rgNodes.clear();
   m_mapFrnToNodeId.clear();
   m_rgSearchEntries.clear();
+  m_mapNodeIdToSearchEntryIndex.clear();
   m_cUnresolvedParents = 0;
   m_bBulkLoad = false;
 }
@@ -282,6 +283,8 @@ void CIndexStore::ResolveParents() {
 void CIndexStore::RebuildSearchEntries() {
   m_rgSearchEntries.clear();
   m_rgSearchEntries.reserve(m_rgNodes.size());
+  m_mapNodeIdToSearchEntryIndex.clear();
+  m_mapNodeIdToSearchEntryIndex.reserve(m_rgNodes.size());
 
   for (UINT32 nodeId = 0; nodeId < static_cast<UINT32>(m_rgNodes.size()); ++nodeId) {
     const INDEX_NODE &node = m_rgNodes[nodeId];
@@ -294,6 +297,7 @@ void CIndexStore::RebuildSearchEntries() {
 
     SEARCH_ENTRY entry = {};
     entry.m_nodeId = nodeId;
+    m_mapNodeIdToSearchEntryIndex[nodeId] = static_cast<UINT32>(m_rgSearchEntries.size());
     m_rgSearchEntries.push_back(entry);
   }
 }
@@ -318,6 +322,12 @@ void CIndexStore::SearchUtf8Streaming(LPCSTR pszQueryUtf8, UINT32 cMaxResults, U
   UINT32 cTotal = 0;
 
   for (const SEARCH_ENTRY &entry : m_rgSearchEntries) {
+    if (entry.m_nodeId == INDEX_INVALID_NODE) {
+      // Tombstoned by TouchSearchEntry (node deleted/renamed away since); m_rgNodes[...] would
+      // be out of bounds for this sentinel.
+      continue;
+    }
+
     if (cMaxResults > 0 && cTotal >= cMaxResults) {
       break;
     }
@@ -552,7 +562,9 @@ bool CIndexStore::MaterializePathUtf8(UINT32 nodeId, std::vector<char> &rgPathUt
 INDEX_STATS CIndexStore::GetStats() const {
   INDEX_STATS stats = {};
   stats.m_cNodes = static_cast<UINT32>(m_rgNodes.size());
-  stats.m_cSearchEntries = static_cast<UINT32>(m_rgSearchEntries.size());
+  // m_rgSearchEntries.size() includes tombstoned slots retired by TouchSearchEntry; the map only
+  // ever holds live entries, so it's the accurate "how many files are actually searchable" count.
+  stats.m_cSearchEntries = static_cast<UINT32>(m_mapNodeIdToSearchEntryIndex.size());
   stats.m_cbPoolUsed = m_pNamePool->GetUsedBytes();
   stats.m_cbPoolAllocated = m_pNamePool->GetAllocatedBytes();
   stats.m_cUnresolvedParents = m_cUnresolvedParents;
@@ -612,11 +624,12 @@ void CIndexStore::ResolveParentForNode(UINT32 nodeId) {
 }
 
 void CIndexStore::TouchSearchEntry(UINT32 nodeId) {
-  for (auto it = m_rgSearchEntries.begin(); it != m_rgSearchEntries.end(); ++it) {
-    if (it->m_nodeId == nodeId) {
-      m_rgSearchEntries.erase(it);
-      break;
-    }
+  const auto itExisting = m_mapNodeIdToSearchEntryIndex.find(nodeId);
+  if (itExisting != m_mapNodeIdToSearchEntryIndex.end()) {
+    // Tombstone in place instead of vector::erase — erase is itself O(n) (shifts every later
+    // element) and would invalidate every other node's recorded index in the map above.
+    m_rgSearchEntries[itExisting->second].m_nodeId = INDEX_INVALID_NODE;
+    m_mapNodeIdToSearchEntryIndex.erase(itExisting);
   }
 
   if (nodeId >= m_rgNodes.size()) {
@@ -630,6 +643,7 @@ void CIndexStore::TouchSearchEntry(UINT32 nodeId) {
 
   SEARCH_ENTRY entry = {};
   entry.m_nodeId = nodeId;
+  m_mapNodeIdToSearchEntryIndex[nodeId] = static_cast<UINT32>(m_rgSearchEntries.size());
   m_rgSearchEntries.push_back(entry);
 }
 

@@ -82,8 +82,11 @@ int wmain(int argc, wchar_t *argv[]) {
 
   // Console output is line-buffered by the CRT automatically, but redirecting to a file (as any
   // logging/diagnostic capture does) switches it to full buffering, so progress lines sit unseen
-  // until the buffer fills or the process exits. Force line buffering unconditionally.
-  setvbuf(stdout, nullptr, _IOLBF, 0);
+  // until the buffer fills or the process exits. Force fully unbuffered output instead of
+  // _IOLBF: passing a null buffer with size 0 to _IOLBF is an invalid combination (there is no
+  // buffer for it to allocate) that the debug CRT flags via an interactive assert dialog —
+  // `_IONBF` has no such buffer-allocation step and needs no buffer/size at all.
+  setvbuf(stdout, nullptr, _IONBF, 0);
 
   wprintf(L"Everything.Core %hs — per-volume USN index (single-threaded per disk)\n", EVERYTHING_VERSION);
   wprintf(L"Run as Administrator.\n\n");

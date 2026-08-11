@@ -139,7 +139,10 @@ private:
   SEARCH_SLOT m_searchSlot;
   bool m_bLiveSearchActive = false;
   LIVE_SEARCH m_liveSearch;
-  bool m_bUsnMonitorActive = false;
+  // Written from StopAndWait() on the caller's thread, read from ScheduleUsnPoll/RunUsnPollOnce
+  // on this volume's own io thread — must be atomic, not a plain bool, to guarantee the io thread
+  // observes the stop request promptly instead of on an unspecified later iteration.
+  std::atomic<bool> m_bUsnMonitorActive{false};
   std::unique_ptr<boost::asio::steady_timer> m_pUsnPollTimer;
 
   // Per-volume persisted-index file (index::CIndexPersistence::BuildIndexFilePath), set once the

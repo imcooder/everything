@@ -72,6 +72,13 @@ private:
   std::vector<INDEX_NODE> m_rgNodes;
   std::unordered_map<ULONGLONG, UINT32> m_mapFrnToNodeId;
   std::vector<SEARCH_ENTRY> m_rgSearchEntries;
+  // nodeId -> its live slot in m_rgSearchEntries, so TouchSearchEntry can find/retire an existing
+  // entry in O(1) instead of a linear scan over every indexed file (was O(n) per USN record —
+  // pathological under live monitoring on large volumes, see notes on TouchSearchEntry). A
+  // retired slot is tombstoned in place (m_nodeId = INDEX_INVALID_NODE) rather than erased, so
+  // this map's indices never need updating for unrelated entries; tombstones are skipped by
+  // every reader and only reclaimed by the next full RebuildSearchEntries().
+  std::unordered_map<UINT32, UINT32> m_mapNodeIdToSearchEntryIndex;
   UINT32 m_cUnresolvedParents;
   bool m_bBulkLoad;
 };

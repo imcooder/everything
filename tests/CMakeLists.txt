@@ -4,6 +4,7 @@ add_executable(Everything.Tests
     query_parser_test.cpp
     index_path_test.cpp
     index_persistence_test.cpp
+    index_search_entry_test.cpp
     mft_record_test.cpp
     ${CMAKE_SOURCE_DIR}/src/index/bump_string_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/index/index_persistence.cpp
