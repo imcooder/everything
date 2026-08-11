@@ -38,7 +38,7 @@ public:
     return idx < m_rgRows.size() ? &m_rgRows[idx] : nullptr;
   }
 
-  enum SORT_COLUMN { SORT_BY_NAME = 0, SORT_BY_PATH = 1 };
+  enum SORT_COLUMN { SORT_BY_NAME = 0, SORT_BY_PATH = 1, SORT_BY_SIZE = 2, SORT_BY_TYPE = 3, SORT_BY_DATE_MODIFIED = 4 };
 
   // Re-sorts the current snapshot in place (case-insensitive) and rebuilds the key->index
   // map so AddRowIfAbsent/UpdateRowIfPresent/RemoveRow stay correct afterward. Matches

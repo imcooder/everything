@@ -222,6 +222,11 @@ bool CIndexStore::UpsertFromRecord(const USN_RECORD_V2 &record, INDEX_USN_CHANGE
   node.m_nameOffset = nameOffset;
   node.m_cbName = static_cast<UINT16>(rgUtf8.size());
   node.m_flags = INDEX_NODE_NONE;
+  // USN_RECORD_V2 carries no file size, so m_ullFileSize is deliberately left as whatever this
+  // node already had (0 for a brand-new node, its last known value across a rename/live-touch of
+  // an already-indexed one) — see the m_ullFileSize comment in index_types.h. The record's own
+  // TimeStamp is a reasonable live approximation of "last touched", so that one IS updated here.
+  node.m_ullModifiedTime = static_cast<ULONGLONG>(record.TimeStamp.QuadPart);
 
   if ((record.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
     node.m_flags |= INDEX_NODE_DIRECTORY;
@@ -238,7 +243,7 @@ bool CIndexStore::UpsertFromRecord(const USN_RECORD_V2 &record, INDEX_USN_CHANGE
   return true;
 }
 
-bool CIndexStore::UpsertFromMftRecord(ULONGLONG ullFrn, ULONGLONG ullParentFrn, LPCWSTR wszName, USHORT cchName, bool bIsDirectory, DWORD dwAttributes) {
+bool CIndexStore::UpsertFromMftRecord(ULONGLONG ullFrn, ULONGLONG ullParentFrn, LPCWSTR wszName, USHORT cchName, bool bIsDirectory, DWORD dwAttributes, ULONGLONG ullFileSize, ULONGLONG ullModifiedTime) {
   // dwAttributes (DOS/NTFS attribute flags from $STANDARD_INFORMATION) is accepted for parity
   // with the USN ingestion shape and potential future flag mapping (hidden/system/etc.), but
   // isDirectory is authoritative here — it comes straight from the FILE_RECORD_HEADER in-use
@@ -273,6 +278,8 @@ bool CIndexStore::UpsertFromMftRecord(ULONGLONG ullFrn, ULONGLONG ullParentFrn, 
   node.m_nameOffset = nameOffset;
   node.m_cbName = static_cast<UINT16>(rgUtf8.size());
   node.m_flags = INDEX_NODE_NONE;
+  node.m_ullFileSize = ullFileSize;
+  node.m_ullModifiedTime = ullModifiedTime;
 
   if (bIsDirectory) {
     node.m_flags |= INDEX_NODE_DIRECTORY;
@@ -614,6 +621,18 @@ bool CIndexStore::MaterializePathUtf8(UINT32 nodeId, std::vector<char> &rgPathUt
     rgPathUtf8.insert(rgPathUtf8.end(), it->m_psz, it->m_psz + it->m_cb);
   }
 
+  return true;
+}
+
+bool CIndexStore::GetNodeMetadata(UINT32 nodeId, INDEX_NODE_METADATA &out) const {
+  if (nodeId >= m_rgNodes.size()) {
+    return false;
+  }
+
+  const INDEX_NODE &node = m_rgNodes[nodeId];
+  out.m_bIsDirectory = (node.m_flags & INDEX_NODE_DIRECTORY) != 0;
+  out.m_ullFileSize = node.m_ullFileSize;
+  out.m_ullModifiedTime = node.m_ullModifiedTime;
   return true;
 }
 

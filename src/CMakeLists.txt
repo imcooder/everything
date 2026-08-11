@@ -101,6 +101,7 @@ if(WIN32)
         Everything.Backend
         comctl32
         shell32
+        shlwapi
         ole32
         uxtheme
     )
@@ -151,6 +152,7 @@ if(WIN32)
         Everything.Backend
         comctl32
         shell32
+        shlwapi
         ole32
         uxtheme
     )

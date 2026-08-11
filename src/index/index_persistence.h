@@ -16,7 +16,7 @@ constexpr UINT32 INDEX_PERSIST_MAGIC = static_cast<UINT32>('E') | (static_cast<U
 // Bump on ANY change to INDEX_PERSIST_HEADER, the node table layout (INDEX_NODE), or the string
 // pool byte format. CIndexPersistence::Load() refuses to interpret a file whose version doesn't
 // match exactly (docs/index-persistence-testcases.md, case P6) rather than guess.
-constexpr UINT32 INDEX_PERSIST_VERSION = 1;
+constexpr UINT32 INDEX_PERSIST_VERSION = 2;
 
 // On-disk layout (single file per volume, see CIndexPersistence::BuildIndexFilePath):
 //

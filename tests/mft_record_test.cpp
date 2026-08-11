@@ -46,11 +46,13 @@ std::vector<BYTE> BuildStandardInfoContent(DWORD dwDosAttributes) {
   return content;
 }
 
-std::vector<BYTE> BuildFileNameContent(ULONGLONG ullParentFrn, LPCWSTR wszName, BYTE bNamespace) {
+std::vector<BYTE> BuildFileNameContent(ULONGLONG ullParentFrn, LPCWSTR wszName, BYTE bNamespace, ULONGLONG ullRealSize = 0, ULONGLONG ullModificationTime = 0) {
   FILE_NAME_ATTRIBUTE fn = {};
   fn.ParentDirectory = ullParentFrn;
   fn.FileNameLength = static_cast<BYTE>(wcslen(wszName));
   fn.FileNameNamespace = bNamespace;
+  fn.RealSize = ullRealSize;
+  fn.ModificationTime = ullModificationTime;
 
   std::vector<BYTE> content;
   AppendValue(content, fn);
@@ -72,6 +74,8 @@ struct SYNTHETIC_RECORD_OPTIONS {
   std::wstring wstrWin32Name = L"hello.txt";
   bool bIncludeDosDuplicate = false;
   std::wstring wstrDosName = L"HELLO~1.TXT";
+  ULONGLONG ullRealSize = 0;
+  ULONGLONG ullModificationTime = 0;
 };
 
 struct BUILT_RECORD {
@@ -110,7 +114,7 @@ BUILT_RECORD BuildRecordUnfixed(const SYNTHETIC_RECORD_OPTIONS &opts) {
     AppendResidentAttribute(attrs, ATTR_TYPE_STANDARD_INFORMATION, BuildStandardInfoContent(opts.dwDosAttributes));
   }
   if (opts.bIncludeFileName) {
-    AppendResidentAttribute(attrs, ATTR_TYPE_FILE_NAME, BuildFileNameContent(opts.ullParentFrn, opts.wstrWin32Name.c_str(), FILE_NAME_NAMESPACE_WIN32));
+    AppendResidentAttribute(attrs, ATTR_TYPE_FILE_NAME, BuildFileNameContent(opts.ullParentFrn, opts.wstrWin32Name.c_str(), FILE_NAME_NAMESPACE_WIN32, opts.ullRealSize, opts.ullModificationTime));
   }
   if (opts.bIncludeDosDuplicate) {
     AppendResidentAttribute(attrs, ATTR_TYPE_FILE_NAME, BuildFileNameContent(opts.ullParentFrn, opts.wstrDosName.c_str(), FILE_NAME_NAMESPACE_DOS));
@@ -359,6 +363,40 @@ TEST(MftParseFileRecord, DirectoryFlagFromHeaderNotFromFileNameAttribute) {
   EXPECT_TRUE(parsed.bIsDirectory);
 }
 
+// UI Size/Date Modified columns: real size and modification time are already present in the
+// same $FILE_NAME attribute the name/parent come from, so no extra attribute walk is needed —
+// this locks in that ParseFileRecord actually surfaces them.
+TEST(MftParseFileRecord, ExtractsFileSizeAndModifiedTimeFromFileNameAttribute) {
+  SYNTHETIC_RECORD_OPTIONS opts;
+  opts.wstrWin32Name = L"report.docx";
+  opts.ullRealSize = 123456789ull;
+  opts.ullModificationTime = 133700000000000000ull; // arbitrary real-looking FILETIME value
+
+  BUILT_RECORD record = BuildRecordUnfixed(opts);
+
+  MFT_PARSED_RECORD parsed;
+  ASSERT_EQ(ParseFileRecord(record.buf.data(), static_cast<DWORD>(record.buf.size()), 1, parsed), MFT_PARSE_OK);
+  EXPECT_EQ(parsed.ullFileSize, 123456789ull);
+  EXPECT_EQ(parsed.ullModifiedTime, 133700000000000000ull);
+}
+
+// A directory's RealSize is not a meaningful "size" (NTFS leaves it 0 or an index-node size,
+// not the sum of its contents) — the UI hides Size for a folder anyway, so ParseFileRecord
+// forces it to 0 rather than surfacing a confusing/misleading raw value.
+TEST(MftParseFileRecord, DirectoryFileSizeIsAlwaysZero) {
+  SYNTHETIC_RECORD_OPTIONS opts;
+  opts.headerFlags = MFT_RECORD_FLAG_IN_USE | MFT_RECORD_FLAG_IS_DIRECTORY;
+  opts.ullRealSize = 4096ull; // what a real directory's index-node RealSize might look like
+  opts.ullModificationTime = 133700000000000000ull;
+
+  BUILT_RECORD record = BuildRecordUnfixed(opts);
+
+  MFT_PARSED_RECORD parsed;
+  ASSERT_EQ(ParseFileRecord(record.buf.data(), static_cast<DWORD>(record.buf.size()), 1, parsed), MFT_PARSE_OK);
+  EXPECT_EQ(parsed.ullFileSize, 0u);
+  EXPECT_EQ(parsed.ullModifiedTime, 133700000000000000ull);
+}
+
 TEST(MftParseFileRecord, NotInUseRecordSkipped) {
   // M4: in-use bit clear (deleted file / never-reused slot).
   SYNTHETIC_RECORD_OPTIONS opts;
@@ -476,4 +514,33 @@ TEST(IndexStoreMftIngestion, DirectoryFlagPropagatesToIndexNode) {
   ASSERT_TRUE(index::ParseSearchQuery(L"parent:c:\\Downloads", plan));
   store.ResolveParsedQuery(L'C', plan);
   EXPECT_EQ(plan.m_pathScope, index::PATH_SCOPE_SUBTREE);
+}
+
+TEST(IndexStoreMftIngestion, GetNodeMetadataReturnsSizeTimeAndDirectoryFlag) {
+  index::CIndexStore store;
+  store.BeginBulkLoad();
+  ASSERT_TRUE(store.UpsertFromMftRecord(300, 5, L"report.docx", 11, false, FILE_ATTRIBUTE_NORMAL, 987654ull, 133700000000000000ull));
+  ASSERT_TRUE(store.UpsertFromMftRecord(301, 5, L"Backups", 7, true, FILE_ATTRIBUTE_DIRECTORY, 0, 133700000000000000ull));
+  store.FinalizeInitialLoad();
+
+  std::vector<UINT32> fileResults;
+  store.SearchUtf8("report", fileResults, 0);
+  ASSERT_EQ(fileResults.size(), 1u);
+
+  index::INDEX_NODE_METADATA fileMeta;
+  ASSERT_TRUE(store.GetNodeMetadata(fileResults[0], fileMeta));
+  EXPECT_FALSE(fileMeta.m_bIsDirectory);
+  EXPECT_EQ(fileMeta.m_ullFileSize, 987654ull);
+  EXPECT_EQ(fileMeta.m_ullModifiedTime, 133700000000000000ull);
+
+  std::vector<UINT32> dirResults;
+  store.SearchUtf8("Backups", dirResults, 0);
+  ASSERT_EQ(dirResults.size(), 1u);
+
+  index::INDEX_NODE_METADATA dirMeta;
+  ASSERT_TRUE(store.GetNodeMetadata(dirResults[0], dirMeta));
+  EXPECT_TRUE(dirMeta.m_bIsDirectory);
+
+  index::INDEX_NODE_METADATA outOfRange;
+  EXPECT_FALSE(store.GetNodeMetadata(9999, outOfRange));
 }

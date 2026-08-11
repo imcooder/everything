@@ -218,6 +218,11 @@ struct MFT_PARSED_RECORD {
   USHORT cchName = 0;
   bool bIsDirectory = false;
   DWORD dwAttributes = 0;
+  // From the same $FILE_NAME attribute the name/parent came from (README: real file size and
+  // last-modified time are already present there, so no extra attribute walk is needed).
+  // ullFileSize is always 0 for a directory (NTFS doesn't track a meaningful "size" for one).
+  ULONGLONG ullFileSize = 0;
+  ULONGLONG ullModifiedTime = 0; // FILETIME (100ns intervals since 1601-01-01), 0 if unknown
 };
 
 // Parses one already fixed-up MFT record (see ApplyFixup) at record index ullRecordIndex.

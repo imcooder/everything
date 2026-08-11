@@ -27,9 +27,13 @@ public:
   // USN_RECORD_V2. Shares UpsertFromRecord's node/name-pool/parent-link mechanics; callers
   // still finish with FinalizeInitialLoad() exactly as the USN bulk-load path does, so parent
   // resolution and search-entry rebuilding are never duplicated between the two load paths.
-  bool UpsertFromMftRecord(ULONGLONG ullFrn, ULONGLONG ullParentFrn, LPCWSTR wszName, USHORT cchName, bool bIsDirectory, DWORD dwAttributes);
+  bool UpsertFromMftRecord(ULONGLONG ullFrn, ULONGLONG ullParentFrn, LPCWSTR wszName, USHORT cchName, bool bIsDirectory, DWORD dwAttributes, ULONGLONG ullFileSize = 0, ULONGLONG ullModifiedTime = 0);
 
   void FinalizeInitialLoad();
+
+  // Display-only lookup for the UI (Size/Date Modified/folder-icon columns). Returns false if
+  // nodeId is out of range; never fails for any other reason.
+  bool GetNodeMetadata(UINT32 nodeId, INDEX_NODE_METADATA &out) const;
 
   void SearchUtf8(LPCSTR pszQueryUtf8, std::vector<UINT32> &rgNodeIds, UINT32 cMaxResults) const;
 

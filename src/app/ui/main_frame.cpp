@@ -3,8 +3,10 @@
 #include "app/ui/ui_search_sink.h"
 
 #include <shellapi.h>
+#include <shlwapi.h>
 
 #include <cstdio>
+#include <iterator>
 
 namespace ui {
 
@@ -12,6 +14,52 @@ namespace {
 
 constexpr int kEditHeight = 26;
 constexpr int kMargin = 4;
+
+// StrFormatByteSizeW matches the exact "1.20 MB" / "854 bytes" style Explorer itself uses, so
+// results look native rather than inventing a bespoke format.
+std::wstring FormatFileSize(UINT64 ullBytes) {
+  if (ullBytes == 0) {
+    return L"0 bytes";
+  }
+  WCHAR wszBuf[64] = {};
+  ::StrFormatByteSizeW(static_cast<LONGLONG>(ullBytes), wszBuf, static_cast<UINT>(std::size(wszBuf)));
+  return wszBuf;
+}
+
+// ullFileTime is 0 for a node whose modified time was never captured (e.g. a synthetic/test
+// row) — real MFT-derived and USN-derived rows always have a real value.
+std::wstring FormatFileTime(UINT64 ullFileTime) {
+  if (ullFileTime == 0) {
+    return std::wstring();
+  }
+
+  FILETIME ftUtc;
+  ftUtc.dwLowDateTime = static_cast<DWORD>(ullFileTime & 0xFFFFFFFFu);
+  ftUtc.dwHighDateTime = static_cast<DWORD>(ullFileTime >> 32);
+
+  FILETIME ftLocal;
+  SYSTEMTIME st;
+  if (!::FileTimeToLocalFileTime(&ftUtc, &ftLocal) || !::FileTimeToSystemTime(&ftLocal, &st)) {
+    return std::wstring();
+  }
+
+  WCHAR wszDate[64] = {};
+  WCHAR wszTime[64] = {};
+  ::GetDateFormatW(LOCALE_USER_DEFAULT, DATE_SHORTDATE, &st, nullptr, wszDate, static_cast<int>(std::size(wszDate)));
+  ::GetTimeFormatW(LOCALE_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, wszTime, static_cast<int>(std::size(wszTime)));
+
+  return std::wstring(wszDate) + L" " + wszTime;
+}
+
+// SHGFI_USEFILEATTRIBUTES makes this a pure registry/extension lookup — it never touches the
+// actual file on disk, so it's safe (and fast) to call even for a stale row whose file no
+// longer exists, and never blocks on I/O to the volume this row came from.
+std::wstring GetShellTypeName(const std::wstring &wstrName, bool bIsDirectory) {
+  SHFILEINFOW info = {};
+  const DWORD dwAttributes = bIsDirectory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+  const DWORD_PTR result = ::SHGetFileInfoW(wstrName.c_str(), dwAttributes, &info, sizeof(info), SHGFI_TYPENAME | SHGFI_USEFILEATTRIBUTES);
+  return result != 0 ? info.szTypeName : std::wstring();
+}
 
 } // namespace
 
@@ -35,8 +83,13 @@ LRESULT CMainFrame::OnCreate(LPCREATESTRUCT /*lpCreateStruct*/) {
 
   m_list.Create(m_hWnd, rcDummy, nullptr, WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_OWNERDATA | LVS_SHOWSELALWAYS, WS_EX_CLIENTEDGE, IDC_LIST_RESULTS);
   m_list.SetExtendedListViewStyle(LVS_EX_FULLROWSELECT);
-  m_list.InsertColumn(0, _T("Name"), LVCFMT_LEFT, 320);
-  m_list.InsertColumn(1, _T("Path"), LVCFMT_LEFT, 520);
+  // Column order/defaults match real Everything's own default layout (Name, Path, Size, Type,
+  // Date Modified).
+  m_list.InsertColumn(0, _T("Name"), LVCFMT_LEFT, 260);
+  m_list.InsertColumn(1, _T("Path"), LVCFMT_LEFT, 360);
+  m_list.InsertColumn(2, _T("Size"), LVCFMT_RIGHT, 90);
+  m_list.InsertColumn(3, _T("Type"), LVCFMT_LEFT, 140);
+  m_list.InsertColumn(4, _T("Date Modified"), LVCFMT_LEFT, 140);
 
   CreateSimpleStatusBar(_T("Starting..."));
 
@@ -143,8 +196,36 @@ LRESULT CMainFrame::OnListGetDispInfo(int /*idCtrl*/, LPNMHDR pnmh, BOOL & /*bHa
   }
 
   if ((item.mask & LVIF_TEXT) != 0 && item.pszText != nullptr && item.cchTextMax > 0) {
-    const std::wstring &wstrValue = (item.iSubItem == 0) ? pRow->m_wstrName : pRow->m_wstrFolder;
-    lstrcpynW(item.pszText, wstrValue.c_str(), item.cchTextMax);
+    // Only the currently visible rows ever reach here (LVS_OWNERDATA), so the per-row
+    // formatting work below (SHGetFileInfo, date/size formatting) is bounded by viewport size,
+    // not total result count — safe to do eagerly here instead of precomputing for every row.
+    switch (item.iSubItem) {
+    case 0:
+      lstrcpynW(item.pszText, pRow->m_wstrName.c_str(), item.cchTextMax);
+      break;
+    case 1:
+      lstrcpynW(item.pszText, pRow->m_wstrFolder.c_str(), item.cchTextMax);
+      break;
+    case 2: {
+      // Real Everything (and Explorer) leave Size blank for a folder rather than showing "0
+      // bytes" or walking its contents to compute a total.
+      const std::wstring wstrSize = pRow->m_bIsDirectory ? std::wstring() : FormatFileSize(pRow->m_ullFileSize);
+      lstrcpynW(item.pszText, wstrSize.c_str(), item.cchTextMax);
+      break;
+    }
+    case 3: {
+      const std::wstring wstrType = GetShellTypeName(pRow->m_wstrName, pRow->m_bIsDirectory);
+      lstrcpynW(item.pszText, wstrType.c_str(), item.cchTextMax);
+      break;
+    }
+    case 4: {
+      const std::wstring wstrDate = FormatFileTime(pRow->m_ullModifiedTime);
+      lstrcpynW(item.pszText, wstrDate.c_str(), item.cchTextMax);
+      break;
+    }
+    default:
+      break;
+    }
   }
 
   return 0;
@@ -241,7 +322,13 @@ LRESULT CMainFrame::OnListEnterKey(int /*idCtrl*/, LPNMHDR /*pnmh*/, BOOL & /*bH
 
 LRESULT CMainFrame::OnListColumnClick(int /*idCtrl*/, LPNMHDR pnmh, BOOL & /*bHandled*/) {
   const NMLISTVIEW *pInfo = reinterpret_cast<NMLISTVIEW *>(pnmh);
-  const CResultModel::SORT_COLUMN column = (pInfo->iSubItem == 0) ? CResultModel::SORT_BY_NAME : CResultModel::SORT_BY_PATH;
+  static constexpr CResultModel::SORT_COLUMN kColumnBySubItem[] = {
+      CResultModel::SORT_BY_NAME, CResultModel::SORT_BY_PATH, CResultModel::SORT_BY_SIZE, CResultModel::SORT_BY_TYPE, CResultModel::SORT_BY_DATE_MODIFIED,
+  };
+  if (pInfo->iSubItem < 0 || static_cast<size_t>(pInfo->iSubItem) >= std::size(kColumnBySubItem)) {
+    return 0;
+  }
+  const CResultModel::SORT_COLUMN column = kColumnBySubItem[pInfo->iSubItem];
 
   // Everything's own behavior: clicking the already-active sort column reverses direction;
   // clicking a different column starts that column fresh at ascending.
@@ -256,7 +343,7 @@ LRESULT CMainFrame::OnListColumnClick(int /*idCtrl*/, LPNMHDR pnmh, BOOL & /*bHa
   m_list.RedrawItems(0, m_list.GetItemCount() - 1);
 
   CHeaderCtrl header = m_list.GetHeader();
-  for (int i = 0; i < 2; ++i) {
+  for (int i = 0; i < static_cast<int>(std::size(kColumnBySubItem)); ++i) {
     HDITEM hdItem = {};
     hdItem.mask = HDI_FORMAT;
     header.GetItem(i, &hdItem);

@@ -517,7 +517,8 @@ bool CVolume::TryLoadViaMftDirectRead() {
   ntfs::CMftReader reader;
   reader.SetVolumeHandle(m_pVolumeHandle.get());
   reader.SetErrorCallback(m_fnError);
-  reader.SetRecordCallback([this](ULONGLONG ullFrn, ULONGLONG ullParentFrn, LPCWSTR wszName, USHORT cchName, bool bIsDirectory, DWORD dwAttributes) { m_index.UpsertFromMftRecord(ullFrn, ullParentFrn, wszName, cchName, bIsDirectory, dwAttributes); });
+  reader.SetRecordCallback(
+      [this](ULONGLONG ullFrn, ULONGLONG ullParentFrn, LPCWSTR wszName, USHORT cchName, bool bIsDirectory, DWORD dwAttributes, ULONGLONG ullFileSize, ULONGLONG ullModifiedTime) { m_index.UpsertFromMftRecord(ullFrn, ullParentFrn, wszName, cchName, bIsDirectory, dwAttributes, ullFileSize, ullModifiedTime); });
 
   if (!reader.ReadAll()) {
     if (m_fnError) {
@@ -729,6 +730,10 @@ bool CVolume::MaterializeFullPathUtf8(UINT32 nodeId, std::vector<char> &rgPathUt
   }
 
   return true;
+}
+
+bool CVolume::GetNodeMetadata(UINT32 nodeId, index::INDEX_NODE_METADATA &out) const {
+  return m_index.GetNodeMetadata(nodeId, out);
 }
 
 } // namespace volume

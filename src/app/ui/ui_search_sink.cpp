@@ -68,6 +68,13 @@ bool CUiSearchSink::BuildRow(WCHAR wchDrive, UINT32 nodeId, ROW_DATA &outRow) co
     outRow.m_wstrFolder = wstrFull.substr(0, pos);
   }
 
+  index::INDEX_NODE_METADATA metadata;
+  if (pVolume->GetNodeMetadata(nodeId, metadata)) {
+    outRow.m_bIsDirectory = metadata.m_bIsDirectory;
+    outRow.m_ullFileSize = metadata.m_ullFileSize;
+    outRow.m_ullModifiedTime = metadata.m_ullModifiedTime;
+  }
+
   return true;
 }
 

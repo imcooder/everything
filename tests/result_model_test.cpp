@@ -85,5 +85,89 @@ TEST(ResultModelSort, EmptyModelSortIsNoOp) {
   EXPECT_EQ(model.GetCount(), 0u);
 }
 
+TEST(ResultModelSort, SortBySizeIsNumericNotLexicographic) {
+  CResultModel model;
+  ROW_DATA small = MakeRow(L'C', 1, L"small.txt", L"C:\\small.txt");
+  small.m_ullFileSize = 9;
+  ROW_DATA big = MakeRow(L'C', 2, L"big.txt", L"C:\\big.txt");
+  big.m_ullFileSize = 100; // lexicographically "100" < "9", numerically 100 > 9
+  model.AddRowIfAbsent(small);
+  model.AddRowIfAbsent(big);
+
+  model.SortBy(CResultModel::SORT_BY_SIZE, true);
+
+  ASSERT_EQ(model.GetCount(), 2u);
+  EXPECT_EQ(model.GetRow(0)->m_wstrName, L"small.txt");
+  EXPECT_EQ(model.GetRow(1)->m_wstrName, L"big.txt");
+}
+
+TEST(ResultModelSort, SortByTypeGroupsDirectoriesBeforeFilesAscending) {
+  CResultModel model;
+  ROW_DATA file = MakeRow(L'C', 1, L"report.txt", L"C:\\report.txt");
+  ROW_DATA dir = MakeRow(L'C', 2, L"Backups", L"C:\\Backups");
+  dir.m_bIsDirectory = true;
+  model.AddRowIfAbsent(file);
+  model.AddRowIfAbsent(dir);
+
+  model.SortBy(CResultModel::SORT_BY_TYPE, true);
+
+  ASSERT_EQ(model.GetCount(), 2u);
+  EXPECT_EQ(model.GetRow(0)->m_wstrName, L"Backups");
+  EXPECT_EQ(model.GetRow(1)->m_wstrName, L"report.txt");
+}
+
+TEST(ResultModelSort, SortByTypeFallsBackToExtension) {
+  CResultModel model;
+  ROW_DATA docx = MakeRow(L'C', 1, L"report.docx", L"C:\\report.docx");
+  ROW_DATA txt = MakeRow(L'C', 2, L"notes.txt", L"C:\\notes.txt");
+  model.AddRowIfAbsent(docx);
+  model.AddRowIfAbsent(txt);
+
+  model.SortBy(CResultModel::SORT_BY_TYPE, true);
+
+  ASSERT_EQ(model.GetCount(), 2u);
+  EXPECT_EQ(model.GetRow(0)->m_wstrName, L"report.docx"); // "docx" < "txt"
+  EXPECT_EQ(model.GetRow(1)->m_wstrName, L"notes.txt");
+}
+
+TEST(ResultModelSort, SortByDateModifiedIsNumeric) {
+  CResultModel model;
+  ROW_DATA older = MakeRow(L'C', 1, L"older.txt", L"C:\\older.txt");
+  older.m_ullModifiedTime = 100;
+  ROW_DATA newer = MakeRow(L'C', 2, L"newer.txt", L"C:\\newer.txt");
+  newer.m_ullModifiedTime = 200;
+  model.AddRowIfAbsent(newer);
+  model.AddRowIfAbsent(older);
+
+  model.SortBy(CResultModel::SORT_BY_DATE_MODIFIED, true);
+
+  ASSERT_EQ(model.GetCount(), 2u);
+  EXPECT_EQ(model.GetRow(0)->m_wstrName, L"older.txt");
+  EXPECT_EQ(model.GetRow(1)->m_wstrName, L"newer.txt");
+}
+
+// OnUpdated (rename-in-place or a metadata-only touch) must refresh size/date/isDirectory too,
+// not just the path fields — otherwise a live content change would leave stale Size/Date
+// Modified columns displayed until the next full reload.
+TEST(ResultModelUpdate, UpdateRowIfPresentRefreshesMetadataFields) {
+  CResultModel model;
+  ROW_DATA original = MakeRow(L'C', 1, L"report.txt", L"C:\\report.txt");
+  original.m_ullFileSize = 100;
+  original.m_ullModifiedTime = 1000;
+  original.m_bIsDirectory = false;
+  model.AddRowIfAbsent(original);
+
+  ROW_DATA updated = MakeRow(L'C', 1, L"report.txt", L"C:\\report.txt");
+  updated.m_ullFileSize = 999;
+  updated.m_ullModifiedTime = 2000;
+  updated.m_bIsDirectory = false;
+  ASSERT_TRUE(model.UpdateRowIfPresent(updated));
+
+  const ROW_DATA *pRow = model.GetRow(0);
+  ASSERT_NE(pRow, nullptr);
+  EXPECT_EQ(pRow->m_ullFileSize, 999u);
+  EXPECT_EQ(pRow->m_ullModifiedTime, 2000u);
+}
+
 } // namespace
 } // namespace ui

@@ -34,6 +34,11 @@ struct ROW_DATA {
   std::wstring m_wstrName;   // leaf filename, e.g. "delta-report.txt"
   std::wstring m_wstrFolder; // containing folder, e.g. "C:\Temp\evtest" (no trailing backslash)
   std::wstring m_wstrFullPath;
+  // Display-only (Size/Type/Date Modified columns) — see INDEX_NODE_METADATA. Always
+  // m_bIsDirectory == false/size == 0 fallback if the underlying node lookup fails.
+  bool m_bIsDirectory = false;
+  UINT64 m_ullFileSize = 0;
+  UINT64 m_ullModifiedTime = 0; // FILETIME (100ns intervals since 1601-01-01), 0 if unknown
 };
 
 // Posted for OnBatch/OnAdded/OnUpdated. Heap-allocated by the sink (on the volume I/O

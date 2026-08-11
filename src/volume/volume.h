@@ -67,6 +67,7 @@ public:
   // Volume I/O thread only.
   bool MaterializePathUtf8(UINT32 nodeId, std::vector<char> &rgPathUtf8) const;
   bool MaterializeFullPathUtf8(UINT32 nodeId, std::vector<char> &rgPathUtf8) const;
+  bool GetNodeMetadata(UINT32 nodeId, index::INDEX_NODE_METADATA &out) const;
 
 private:
   void WireUsnCallbacks();

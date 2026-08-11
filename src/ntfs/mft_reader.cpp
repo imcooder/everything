@@ -302,7 +302,7 @@ BOOL CMftReader::ReadAll() {
     }
 
     if (m_fnRecord) {
-      m_fnRecord(parsed.ullFrn, parsed.ullParentFrn, parsed.pwszName, parsed.cchName, parsed.bIsDirectory, parsed.dwAttributes);
+      m_fnRecord(parsed.ullFrn, parsed.ullParentFrn, parsed.pwszName, parsed.cchName, parsed.bIsDirectory, parsed.dwAttributes, parsed.ullFileSize, parsed.ullModifiedTime);
     }
 
     ++m_dwRecordCount;

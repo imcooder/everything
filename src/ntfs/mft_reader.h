@@ -13,7 +13,7 @@ namespace ntfs {
 // call into CIndexStore the same way it currently consumes USN_RECORD_V2 rows. wszName points
 // into a reader-owned buffer valid only for the duration of the call (mirrors CUsnEnumerator's
 // own zero-copy USN_RECORD_V2 convention) — copy out anything you need to keep.
-using MftRecordCallback = std::function<void(ULONGLONG ullFrn, ULONGLONG ullParentFrn, LPCWSTR wszName, USHORT cchName, bool bIsDirectory, DWORD dwAttributes)>;
+using MftRecordCallback = std::function<void(ULONGLONG ullFrn, ULONGLONG ullParentFrn, LPCWSTR wszName, USHORT cchName, bool bIsDirectory, DWORD dwAttributes, ULONGLONG ullFileSize, ULONGLONG ullModifiedTime)>;
 
 // Loads the initial index by parsing the NTFS Master File Table directly (README §1) instead
 // of FSCTL_ENUM_USN_DATA. Bulk-reads $MFT's own data runs from its record-0 $DATA attribute

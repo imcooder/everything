@@ -241,6 +241,8 @@ MFT_PARSE_RESULT ParseFileRecord(const BYTE *pRecord, DWORD cbRecord, UINT64 ull
   const WCHAR *pwszBestName = nullptr;
   USHORT cchBestName = 0;
   ULONGLONG ullBestParentFrn = 0;
+  ULONGLONG ullBestFileSize = 0;
+  ULONGLONG ullBestModifiedTime = 0;
   int nBestPriority = 5;
 
   DWORD offset = firstAttrOffset;
@@ -282,6 +284,10 @@ MFT_PARSE_RESULT ParseFileRecord(const BYTE *pRecord, DWORD cbRecord, UINT64 ull
               pwszBestName = reinterpret_cast<const WCHAR *>(reinterpret_cast<const BYTE *>(pAttr) + cbNameStart);
               cchBestName = pFileName->FileNameLength;
               ullBestParentFrn = pFileName->ParentDirectory;
+              // RealSize is meaningless for a directory (NTFS leaves it 0 or a small index-node
+              // size); the UI hides size for directories anyway, so no need to special-case here.
+              ullBestFileSize = pFileName->RealSize;
+              ullBestModifiedTime = pFileName->ModificationTime;
             }
           }
         }
@@ -301,6 +307,8 @@ MFT_PARSE_RESULT ParseFileRecord(const BYTE *pRecord, DWORD cbRecord, UINT64 ull
   out.cchName = cchBestName;
   out.bIsDirectory = (pHeader->Flags & MFT_RECORD_FLAG_IS_DIRECTORY) != 0;
   out.dwAttributes = bHaveStandardInfo ? dwAttributes : 0;
+  out.ullFileSize = out.bIsDirectory ? 0 : ullBestFileSize;
+  out.ullModifiedTime = ullBestModifiedTime;
 
   return MFT_PARSE_OK;
 }
