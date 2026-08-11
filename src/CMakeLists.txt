@@ -134,3 +134,16 @@ if(WIN32)
         uxtheme
     )
 endif()
+
+# ---------------------------------------------------------------------------
+# Manual real-volume diagnostics — not run by CI (no admin/real-disk access there), used to
+# verify load/monitor/search against actual NTFS volumes by hand. See tests/diag_*.cpp.
+# ---------------------------------------------------------------------------
+add_executable(Everything.DiagSingleVolume ${CMAKE_SOURCE_DIR}/tests/diag_single_volume.cpp)
+target_link_libraries(Everything.DiagSingleVolume PRIVATE Everything.Backend)
+
+add_executable(Everything.DiagMonitorTest ${CMAKE_SOURCE_DIR}/tests/diag_monitor_test.cpp)
+target_link_libraries(Everything.DiagMonitorTest PRIVATE Everything.Backend)
+
+add_executable(Everything.DiagSearchTest ${CMAKE_SOURCE_DIR}/tests/diag_search_test.cpp)
+target_link_libraries(Everything.DiagSearchTest PRIVATE Everything.Backend)

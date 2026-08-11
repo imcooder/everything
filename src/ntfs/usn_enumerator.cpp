@@ -36,9 +36,16 @@ BOOL CUsnEnumerator::EnumerateAll() {
 
 BOOL CUsnEnumerator::EnumerateFrom(USN usnStartFrn) {
   HANDLE hVolume = m_pVolume->GetHandle();
-  MFT_ENUM_DATA_V1 enumData = {};
+  // V0 (not V1): V1 adds MinMajorVersion/MaxMajorVersion to opt into USN_RECORD_V3 (128-bit file
+  // IDs) — leaving those zero-initialized is an invalid version range and fails the whole call
+  // with ERROR_INVALID_PARAMETER. This code parses USN_RECORD_V2 (see the reinterpret_cast below),
+  // so V0 is both correct and sidesteps the version negotiation entirely.
+  MFT_ENUM_DATA_V0 enumData = {};
   enumData.StartFileReferenceNumber = usnStartFrn;
   enumData.LowUsn = 0;
+  // Also required: a zeroed HighUsn makes the valid Usn range [0, 0) — empty — so every real
+  // record would be excluded even if the version fields above were correct.
+  enumData.HighUsn = MAXLONGLONG;
 
   BYTE rgBuffer[ENUM_BUFFER_SIZE];
 
@@ -46,6 +53,13 @@ BOOL CUsnEnumerator::EnumerateFrom(USN usnStartFrn) {
     DWORD dwReturned = 0;
     if (!DeviceIoControl(hVolume, FSCTL_ENUM_USN_DATA, &enumData, sizeof(enumData), rgBuffer, sizeof(rgBuffer), &dwReturned, nullptr)) {
       const DWORD dwError = GetLastError();
+      if (dwError == ERROR_HANDLE_EOF) {
+        // Not a real failure — this driver/volume signals "no more records" by failing the call
+        // with EOF instead of returning a short buffer (the dwReturned <= sizeof(USN) check
+        // below), unlike the more common behavior. Either signal means enumeration is complete.
+        break;
+      }
+
       if (m_fnError) {
         m_fnError(dwError, L"FSCTL_ENUM_USN_DATA failed");
       }

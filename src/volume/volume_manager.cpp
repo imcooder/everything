@@ -86,13 +86,21 @@ void CVolumeManager::OpenAllAsync() {
 void CVolumeManager::StartLoadAllAsync() {
   std::lock_guard<std::mutex> lock(m_mutex);
 
+  // Two passes, not one combined loop: opening volume N+1 while volume N's load is already
+  // hammering a shared physical disk with heavy sequential reads has been observed to stall the
+  // CreateFileW call for N+1 on this storage stack when N and N+1 are sibling partitions of the
+  // same physical disk. Finishing every Open() first (fast; no volume has started reading yet)
+  // before any StartLoadAsync() avoids that interaction entirely.
+  std::vector<CVolume *> rgOpened;
+  rgOpened.reserve(m_mapVolumes.size());
   for (auto &pair : m_mapVolumes) {
-    if (pair.second != nullptr) {
-      if (!pair.second->Open()) {
-        continue;
-      }
-      pair.second->StartLoadAsync();
+    if (pair.second != nullptr && pair.second->Open()) {
+      rgOpened.push_back(pair.second.get());
     }
+  }
+
+  for (CVolume *pVolume : rgOpened) {
+    pVolume->StartLoadAsync();
   }
 }
 

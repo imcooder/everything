@@ -80,6 +80,11 @@ int wmain(int argc, wchar_t *argv[]) {
   UNREFERENCED_PARAMETER(argc);
   UNREFERENCED_PARAMETER(argv);
 
+  // Console output is line-buffered by the CRT automatically, but redirecting to a file (as any
+  // logging/diagnostic capture does) switches it to full buffering, so progress lines sit unseen
+  // until the buffer fills or the process exits. Force line buffering unconditionally.
+  setvbuf(stdout, nullptr, _IOLBF, 0);
+
   wprintf(L"Everything.Core %hs — per-volume USN index (single-threaded per disk)\n", EVERYTHING_VERSION);
   wprintf(L"Run as Administrator.\n\n");
 
@@ -119,8 +124,11 @@ int wmain(int argc, wchar_t *argv[]) {
         setCompleted.insert(wch);
         wprintf(L"  %c: USN records=%u\n", wch, pVolume->GetEnumeratedRecordCount());
         PrintIndexStats(wch, pVolume->GetLastIndexStats());
-      } else if (state == volume::VOLUME_STATE_ERROR) {
-        bAllDone = false;
+      } else if (state == volume::VOLUME_STATE_ERROR && setCompleted.find(wch) == setCompleted.end()) {
+        // A volume in ERROR state will never transition to ENUMERATING/READY again — treat it as
+        // terminal (like a completed load) so one bad volume can't wedge the wait loop forever.
+        setCompleted.insert(wch);
+        wprintf(L"  %c: load failed, skipping\n", wch);
       }
     }
 
