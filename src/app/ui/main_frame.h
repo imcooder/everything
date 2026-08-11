@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <thread>
@@ -43,10 +44,22 @@ public:
     NOTIFY_HANDLER(IDC_LIST_RESULTS, LVN_GETDISPINFO, OnListGetDispInfo)
     NOTIFY_HANDLER(IDC_LIST_RESULTS, NM_DBLCLK, OnListDblClick)
     NOTIFY_HANDLER(IDC_LIST_RESULTS, NM_RETURN, OnListEnterKey)
+    NOTIFY_HANDLER(IDC_LIST_RESULTS, LVN_COLUMNCLICK, OnListColumnClick)
+    NOTIFY_HANDLER(IDC_LIST_RESULTS, NM_RCLICK, OnListRightClick)
+    NOTIFY_HANDLER(IDC_LIST_RESULTS, LVN_KEYDOWN, OnListKeyDown)
+    COMMAND_ID_HANDLER(ID_CONTEXT_OPEN, OnContextOpen)
+    COMMAND_ID_HANDLER(ID_CONTEXT_OPEN_PATH, OnContextOpenPath)
+    COMMAND_ID_HANDLER(ID_CONTEXT_COPY_PATH, OnContextCopyFullPath)
+    COMMAND_ID_HANDLER(ID_CONTEXT_COPY_NAME, OnContextCopyName)
   END_MSG_MAP()
   // clang-format on
 
   enum { IDC_EDIT_SEARCH = 1001, IDC_LIST_RESULTS = 1002 };
+
+  // Everything's own context-menu item order: Open, Open path, then the two copy actions.
+  // Local command IDs (not shared with any system range) — safe as WM_COMMAND ids since
+  // this app has no other menu/accelerator source that could collide.
+  enum { ID_CONTEXT_OPEN = 2001, ID_CONTEXT_OPEN_PATH = 2002, ID_CONTEXT_COPY_PATH = 2003, ID_CONTEXT_COPY_NAME = 2004 };
 
   ~CMainFrame();
 
@@ -67,6 +80,17 @@ private:
   LRESULT OnListGetDispInfo(int idCtrl, LPNMHDR pnmh, BOOL &bHandled);
   LRESULT OnListDblClick(int idCtrl, LPNMHDR pnmh, BOOL &bHandled);
   LRESULT OnListEnterKey(int idCtrl, LPNMHDR pnmh, BOOL &bHandled);
+  LRESULT OnListColumnClick(int idCtrl, LPNMHDR pnmh, BOOL &bHandled);
+  LRESULT OnListRightClick(int idCtrl, LPNMHDR pnmh, BOOL &bHandled);
+  // LVN_KEYDOWN only fires while the ListView itself has focus, so Ctrl+C/Ctrl+A/Ctrl+Enter
+  // here never shadow the search Edit box's own text-editing shortcuts (no accelerator table
+  // needed, and no risk of the frame-wide TranslateAccelerator route stealing keys from m_edit).
+  LRESULT OnListKeyDown(int idCtrl, LPNMHDR pnmh, BOOL &bHandled);
+
+  LRESULT OnContextOpen(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL &bHandled);
+  LRESULT OnContextOpenPath(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL &bHandled);
+  LRESULT OnContextCopyFullPath(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL &bHandled);
+  LRESULT OnContextCopyName(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL &bHandled);
 
   LRESULT OnSearchBatch(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
   LRESULT OnSearchAdded(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
@@ -79,13 +103,21 @@ private:
 
   void StartNewSearch(const std::wstring &wstrQuery);
   void OpenSelectedRow();
+  void OpenSelectedRowContainingFolder();
+  void CopySelectedRowsToClipboard(bool bFullPath);
   void UpdateStatusBarCount();
   void PostStatus(const std::wstring &wstrText) const;
   void StartupWorker();
   std::wstring GetEditText() const;
+  void OnVolumeError(DWORD dwError, LPCWSTR wszMessage);
 
   CEdit m_edit;
   CListViewCtrl m_list;
+
+  // Everything toggles ascending/descending on repeated clicks of the same column and
+  // defaults to ascending on the first click of a different one.
+  CResultModel::SORT_COLUMN m_sortColumn = CResultModel::SORT_BY_NAME;
+  bool m_bSortAscending = true;
 
   volume::CVolumeManager m_volumeManager;
   CResultModel m_model;
@@ -102,6 +134,14 @@ private:
   std::thread m_startupThread;
   std::atomic<bool> m_bShuttingDown{false};
   bool m_bLoaded = false;
+
+  // Volume errors (e.g. "Access is denied" opening a raw volume handle when not elevated)
+  // fire on volume I/O threads via CVolumeManager::SetErrorCallback. Recorded here
+  // (mutex-guarded — plain std::wstring is not otherwise safe to touch from multiple threads)
+  // so StartupWorker can fold the last one into the final status text instead of the UI
+  // silently reporting "Ready." with zero results and no explanation of why.
+  std::mutex m_mutexLastVolumeError;
+  std::wstring m_wstrLastVolumeError;
 };
 
 } // namespace ui

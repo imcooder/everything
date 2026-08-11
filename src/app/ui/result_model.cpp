@@ -1,6 +1,16 @@
 #include "app/ui/result_model.h"
 
+#include <algorithm>
+
 namespace ui {
+
+namespace {
+
+int CompareIgnoreCase(const std::wstring &wstrLhs, const std::wstring &wstrRhs) {
+  return _wcsicmp(wstrLhs.c_str(), wstrRhs.c_str());
+}
+
+} // namespace
 
 void CResultModel::Clear() {
   m_rgRows.clear();
@@ -51,6 +61,19 @@ bool CResultModel::RemoveRow(ROW_KEY key) {
   m_rgRows.pop_back();
   m_mapKeyToIndex.erase(it);
   return true;
+}
+
+void CResultModel::SortBy(SORT_COLUMN column, bool bAscending) {
+  std::stable_sort(m_rgRows.begin(), m_rgRows.end(), [column, bAscending](const ROW_DATA &lhs, const ROW_DATA &rhs) {
+    const int cmp = (column == SORT_BY_NAME) ? CompareIgnoreCase(lhs.m_wstrName, rhs.m_wstrName) : CompareIgnoreCase(lhs.m_wstrFullPath, rhs.m_wstrFullPath);
+    return bAscending ? cmp < 0 : cmp > 0;
+  });
+
+  m_mapKeyToIndex.clear();
+  m_mapKeyToIndex.reserve(m_rgRows.size());
+  for (UINT32 idx = 0; idx < m_rgRows.size(); ++idx) {
+    m_mapKeyToIndex.emplace(PackRowKey(m_rgRows[idx].m_wchDrive, m_rgRows[idx].m_nodeId), idx);
+  }
 }
 
 } // namespace ui

@@ -38,6 +38,14 @@ public:
     return idx < m_rgRows.size() ? &m_rgRows[idx] : nullptr;
   }
 
+  enum SORT_COLUMN { SORT_BY_NAME = 0, SORT_BY_PATH = 1 };
+
+  // Re-sorts the current snapshot in place (case-insensitive) and rebuilds the key->index
+  // map so AddRowIfAbsent/UpdateRowIfPresent/RemoveRow stay correct afterward. Matches
+  // Everything's own column-click-to-sort behavior; does not keep later live inserts
+  // sorted (they land at the end until the next click), same as a one-shot re-sort.
+  void SortBy(SORT_COLUMN column, bool bAscending);
+
 private:
   std::vector<ROW_DATA> m_rgRows;
   std::unordered_map<ROW_KEY, UINT32> m_mapKeyToIndex;

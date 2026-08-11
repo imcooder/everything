@@ -40,6 +40,8 @@ LRESULT CMainFrame::OnCreate(LPCREATESTRUCT /*lpCreateStruct*/) {
 
   CreateSimpleStatusBar(_T("Starting..."));
 
+  m_volumeManager.SetErrorCallback([this](DWORD dwError, LPCWSTR wszMessage) { OnVolumeError(dwError, wszMessage); });
+
   m_startupThread = std::thread(&CMainFrame::StartupWorker, this);
 
   return 0;
@@ -167,6 +169,66 @@ void CMainFrame::OpenSelectedRow() {
   }
 }
 
+void CMainFrame::OpenSelectedRowContainingFolder() {
+  const int idx = m_list.GetNextItem(-1, LVNI_SELECTED);
+  if (idx < 0) {
+    return;
+  }
+
+  const ROW_DATA *pRow = m_model.GetRow(static_cast<UINT32>(idx));
+  if (pRow == nullptr || pRow->m_wstrFullPath.empty()) {
+    return;
+  }
+
+  // "/select," highlights the file itself in the opened Explorer window, matching
+  // Everything's own "Open path" behavior, instead of just landing in the bare folder.
+  const std::wstring wstrArgs = L"/select,\"" + pRow->m_wstrFullPath + L"\"";
+  const HINSTANCE hInst = ::ShellExecuteW(m_hWnd, L"open", L"explorer.exe", wstrArgs.c_str(), nullptr, SW_SHOWNORMAL);
+  if (reinterpret_cast<INT_PTR>(hInst) <= 32) {
+    ::MessageBeep(MB_ICONWARNING);
+  }
+}
+
+void CMainFrame::CopySelectedRowsToClipboard(bool bFullPath) {
+  std::wstring wstrText;
+  int idx = -1;
+  while ((idx = m_list.GetNextItem(idx, LVNI_SELECTED)) != -1) {
+    const ROW_DATA *pRow = m_model.GetRow(static_cast<UINT32>(idx));
+    if (pRow == nullptr) {
+      continue;
+    }
+
+    if (!wstrText.empty()) {
+      wstrText += L"\r\n";
+    }
+    wstrText += bFullPath ? pRow->m_wstrFullPath : pRow->m_wstrName;
+  }
+
+  if (wstrText.empty() || !::OpenClipboard(m_hWnd)) {
+    return;
+  }
+
+  ::EmptyClipboard();
+
+  const size_t cbBuffer = (wstrText.size() + 1) * sizeof(WCHAR);
+  HGLOBAL hMem = ::GlobalAlloc(GMEM_MOVEABLE, cbBuffer);
+  if (hMem != nullptr) {
+    void *pMem = ::GlobalLock(hMem);
+    if (pMem != nullptr) {
+      memcpy(pMem, wstrText.c_str(), cbBuffer);
+      ::GlobalUnlock(hMem);
+      // Clipboard owns hMem once SetClipboardData succeeds; do not free it ourselves.
+      if (::SetClipboardData(CF_UNICODETEXT, hMem) == nullptr) {
+        ::GlobalFree(hMem);
+      }
+    } else {
+      ::GlobalFree(hMem);
+    }
+  }
+
+  ::CloseClipboard();
+}
+
 LRESULT CMainFrame::OnListDblClick(int /*idCtrl*/, LPNMHDR /*pnmh*/, BOOL & /*bHandled*/) {
   OpenSelectedRow();
   return 0;
@@ -174,6 +236,110 @@ LRESULT CMainFrame::OnListDblClick(int /*idCtrl*/, LPNMHDR /*pnmh*/, BOOL & /*bH
 
 LRESULT CMainFrame::OnListEnterKey(int /*idCtrl*/, LPNMHDR /*pnmh*/, BOOL & /*bHandled*/) {
   OpenSelectedRow();
+  return 0;
+}
+
+LRESULT CMainFrame::OnListColumnClick(int /*idCtrl*/, LPNMHDR pnmh, BOOL & /*bHandled*/) {
+  const NMLISTVIEW *pInfo = reinterpret_cast<NMLISTVIEW *>(pnmh);
+  const CResultModel::SORT_COLUMN column = (pInfo->iSubItem == 0) ? CResultModel::SORT_BY_NAME : CResultModel::SORT_BY_PATH;
+
+  // Everything's own behavior: clicking the already-active sort column reverses direction;
+  // clicking a different column starts that column fresh at ascending.
+  if (column == m_sortColumn) {
+    m_bSortAscending = !m_bSortAscending;
+  } else {
+    m_sortColumn = column;
+    m_bSortAscending = true;
+  }
+
+  m_model.SortBy(m_sortColumn, m_bSortAscending);
+  m_list.RedrawItems(0, m_list.GetItemCount() - 1);
+
+  CHeaderCtrl header = m_list.GetHeader();
+  for (int i = 0; i < 2; ++i) {
+    HDITEM hdItem = {};
+    hdItem.mask = HDI_FORMAT;
+    header.GetItem(i, &hdItem);
+    hdItem.fmt &= ~(HDF_SORTUP | HDF_SORTDOWN);
+    if (i == pInfo->iSubItem) {
+      hdItem.fmt |= m_bSortAscending ? HDF_SORTUP : HDF_SORTDOWN;
+    }
+    header.SetItem(i, &hdItem);
+  }
+
+  return 0;
+}
+
+LRESULT CMainFrame::OnListRightClick(int /*idCtrl*/, LPNMHDR /*pnmh*/, BOOL & /*bHandled*/) {
+  if (m_list.GetSelectedCount() == 0) {
+    return 0;
+  }
+
+  POINT ptScreen = {};
+  ::GetCursorPos(&ptScreen);
+
+  // Everything's own context-menu order: Open, Open path, then the two copy actions.
+  HMENU hMenu = ::CreatePopupMenu();
+  if (hMenu == nullptr) {
+    return 0;
+  }
+
+  ::AppendMenuW(hMenu, MF_STRING, ID_CONTEXT_OPEN, L"Open");
+  ::AppendMenuW(hMenu, MF_STRING, ID_CONTEXT_OPEN_PATH, L"Open path");
+  ::AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+  ::AppendMenuW(hMenu, MF_STRING, ID_CONTEXT_COPY_PATH, L"Copy full path");
+  ::AppendMenuW(hMenu, MF_STRING, ID_CONTEXT_COPY_NAME, L"Copy name");
+
+  // SetForegroundWindow before/after TrackPopupMenu is the documented workaround for the
+  // popup not dismissing on an outside click when the owner window wasn't already the
+  // foreground window (MSDN TrackPopupMenu remarks).
+  ::SetForegroundWindow(m_hWnd);
+  // TPM_RETURNCMD + explicit PostMessage(WM_COMMAND) rather than TPM_NONOTIFY: lets
+  // TrackPopupMenu's own modal loop finish and the menu fully close before the command
+  // handler runs, matching how a normal menu click is dispatched.
+  const int idCmd = ::TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, ptScreen.x, ptScreen.y, 0, m_hWnd, nullptr);
+  ::PostMessage(m_hWnd, WM_NULL, 0, 0);
+  ::DestroyMenu(hMenu);
+
+  if (idCmd != 0) {
+    ::PostMessage(m_hWnd, WM_COMMAND, MAKEWPARAM(idCmd, 0), 0);
+  }
+
+  return 0;
+}
+
+LRESULT CMainFrame::OnListKeyDown(int /*idCtrl*/, LPNMHDR pnmh, BOOL & /*bHandled*/) {
+  const NMLVKEYDOWN *pInfo = reinterpret_cast<NMLVKEYDOWN *>(pnmh);
+  const bool bCtrl = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+
+  if (bCtrl && pInfo->wVKey == 'C') {
+    CopySelectedRowsToClipboard(true);
+  } else if (bCtrl && pInfo->wVKey == 'A') {
+    m_list.SetItemState(-1, LVIS_SELECTED, LVIS_SELECTED);
+  } else if (bCtrl && pInfo->wVKey == VK_RETURN) {
+    OpenSelectedRowContainingFolder();
+  }
+
+  return 0;
+}
+
+LRESULT CMainFrame::OnContextOpen(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCtl*/, BOOL & /*bHandled*/) {
+  OpenSelectedRow();
+  return 0;
+}
+
+LRESULT CMainFrame::OnContextOpenPath(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCtl*/, BOOL & /*bHandled*/) {
+  OpenSelectedRowContainingFolder();
+  return 0;
+}
+
+LRESULT CMainFrame::OnContextCopyFullPath(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCtl*/, BOOL & /*bHandled*/) {
+  CopySelectedRowsToClipboard(true);
+  return 0;
+}
+
+LRESULT CMainFrame::OnContextCopyName(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCtl*/, BOOL & /*bHandled*/) {
+  CopySelectedRowsToClipboard(false);
   return 0;
 }
 
@@ -292,6 +458,11 @@ LRESULT CMainFrame::OnLoadDone(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam
   return 0;
 }
 
+void CMainFrame::OnVolumeError(DWORD /*dwError*/, LPCWSTR wszMessage) {
+  std::lock_guard<std::mutex> lock(m_mutexLastVolumeError);
+  m_wstrLastVolumeError = wszMessage != nullptr ? wszMessage : L"";
+}
+
 void CMainFrame::StartupWorker() {
   PostStatus(L"Discovering volumes...");
 
@@ -322,6 +493,7 @@ void CMainFrame::StartupWorker() {
   m_volumeManager.StartLoadAllAsync();
 
   std::set<WCHAR> setDone;
+  std::set<WCHAR> setFailed;
   while (!m_bShuttingDown.load(std::memory_order_acquire)) {
     bool bAllDone = true;
 
@@ -338,6 +510,7 @@ void CMainFrame::StartupWorker() {
         setDone.insert(wch);
       } else if (state == volume::VOLUME_STATE_ERROR) {
         setDone.insert(wch); // Don't spin forever on a volume that failed to open.
+        setFailed.insert(wch);
       } else {
         bAllDone = false;
       }
@@ -355,7 +528,28 @@ void CMainFrame::StartupWorker() {
   }
 
   m_volumeManager.StartMonitorAllAsync();
-  PostStatus(L"Ready.");
+
+  // A volume that failed to open (e.g. "Access is denied" opening \\.\C: when not running
+  // elevated) previously left the status bar saying "Ready." with zero results and no
+  // indication anything was wrong — a real, reproduced bug (repeated non-elevated launches
+  // all showed an empty result list under a "Ready." status). Surface the failure instead.
+  if (setFailed.empty()) {
+    PostStatus(L"Ready.");
+  } else {
+    std::wstring wstrLastError;
+    {
+      std::lock_guard<std::mutex> lock(m_mutexLastVolumeError);
+      wstrLastError = m_wstrLastVolumeError;
+    }
+
+    std::wstring wstrStatus = L"Ready - " + std::to_wstring(setFailed.size()) + L" of " + std::to_wstring(rgLetters.size()) + L" volume(s) failed to open";
+    if (!wstrLastError.empty()) {
+      wstrStatus += L" (" + wstrLastError + L")";
+    }
+    wstrStatus += setFailed.size() == rgLetters.size() ? L". Try running as Administrator." : L".";
+    PostStatus(wstrStatus);
+  }
+
   ::PostMessageW(m_hWnd, WM_APP_LOAD_DONE, 0, 0);
 }
 
