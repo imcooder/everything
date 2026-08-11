@@ -7,6 +7,7 @@ add_executable(Everything.Tests
     index_search_entry_test.cpp
     mft_record_test.cpp
     query_extension_filter_test.cpp
+    result_model_test.cpp
     ${CMAKE_SOURCE_DIR}/src/index/bump_string_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/index/index_persistence.cpp
     ${CMAKE_SOURCE_DIR}/src/index/index_store.cpp
@@ -14,6 +15,7 @@ add_executable(Everything.Tests
     ${CMAKE_SOURCE_DIR}/src/index/query_parser.cpp
     ${CMAKE_SOURCE_DIR}/src/index/utf8_convert.cpp
     ${CMAKE_SOURCE_DIR}/src/ntfs/mft_record.cpp
+    ${CMAKE_SOURCE_DIR}/src/app/ui/result_model.cpp
 )
 
 target_include_directories(Everything.Tests PRIVATE
