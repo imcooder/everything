@@ -1,3 +1,20 @@
+# Final shippable binaries (Everything.Core, Everything.UI — not the Diag*/Tests dev tools)
+# are copied here on every build so there's one stable place to grab a build from, regardless
+# of generator/toolset output layout. Subdirectory is the target platform.
+if(WIN32)
+    set(EVERYTHING_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/output/windows-x64")
+else()
+    set(EVERYTHING_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/output/${CMAKE_SYSTEM_NAME}")
+endif()
+
+function(everything_copy_to_output_dir target_name)
+    add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${EVERYTHING_OUTPUT_DIR}/$<CONFIG>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${target_name}>" "${EVERYTHING_OUTPUT_DIR}/$<CONFIG>/"
+        COMMENT "Copying ${target_name} to ${EVERYTHING_OUTPUT_DIR}/$<CONFIG>/"
+    )
+endfunction()
+
 set(EVERYTHING_BACKEND_SOURCES
     core/ntfs_types.cpp
     io/io_service.cpp
@@ -49,6 +66,8 @@ target_link_libraries(Everything.Core PRIVATE
     Everything.Backend
 )
 
+everything_copy_to_output_dir(Everything.Core)
+
 # ---------------------------------------------------------------------------
 # Everything.UI — WTL-based Win32 windowed UI (search box + virtual ListView + status bar).
 # ---------------------------------------------------------------------------
@@ -97,6 +116,8 @@ if(WIN32)
     if(MSVC)
         target_link_options(Everything.UI PRIVATE "/ENTRY:mainCRTStartup")
     endif()
+
+    everything_copy_to_output_dir(Everything.UI)
 
     # ---------------------------------------------------------------------------
     # Everything.UI.LiveUpdateTest — in-process integration check that CMainFrame's live
