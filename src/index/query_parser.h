@@ -4,6 +4,7 @@
 #include "index/index_types.h"
 #include "index/query_matcher.h"
 
+#include <string>
 #include <vector>
 
 namespace index {
@@ -24,6 +25,12 @@ struct CParsedQuery {
   bool m_bSubtreeIncludesDescendants = true;
   CQueryMatcher m_filenameMatcher;
   bool m_bHasFilenameFilter = false;
+
+  // "ext:txt" or "ext:txt;doc report" (semicolon-separated, ANDed with an optional trailing
+  // filename filter). Lowercased, no leading dot. Not combinable with a leading "parent:" in
+  // this version — ext: must be the query's own prefix.
+  std::vector<std::string> m_rgExtensionFiltersLower;
+  bool m_bHasExtensionFilter = false;
 };
 
 // Parse UI query (UTF-16). Does not touch the index; path scope is finalized by ResolveParsedQuery.

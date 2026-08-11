@@ -147,3 +147,6 @@ target_link_libraries(Everything.DiagMonitorTest PRIVATE Everything.Backend)
 
 add_executable(Everything.DiagSearchTest ${CMAKE_SOURCE_DIR}/tests/diag_search_test.cpp)
 target_link_libraries(Everything.DiagSearchTest PRIVATE Everything.Backend)
+
+add_executable(Everything.DiagSoakTest ${CMAKE_SOURCE_DIR}/tests/diag_soak_test.cpp)
+target_link_libraries(Everything.DiagSoakTest PRIVATE Everything.Backend)

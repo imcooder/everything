@@ -96,6 +96,53 @@ WCHAR ToUpperDriveLetter(WCHAR wchDrive) {
   return wchDrive;
 }
 
+char ToLowerAsciiByte(char ch) {
+  if (ch >= 'A' && ch <= 'Z') {
+    return static_cast<char>(ch + ('a' - 'A'));
+  }
+  return ch;
+}
+
+// pszName/cbName is not necessarily NUL-terminated (raw slice into the string pool). A dotfile
+// like ".gitignore" has no extension by convention — the search must not treat the whole name
+// after its leading dot as one.
+bool MatchesAnyExtension(const char *pszName, UINT32 cbName, const std::vector<std::string> &rgExtensionsLower) {
+  if (cbName == 0) {
+    return false;
+  }
+
+  UINT32 idxLastDot = UINT32_MAX;
+  for (UINT32 i = 1; i < cbName; ++i) {
+    if (pszName[i] == '.') {
+      idxLastDot = i;
+    }
+  }
+
+  if (idxLastDot == UINT32_MAX || idxLastDot + 1 >= cbName) {
+    return false;
+  }
+
+  const UINT32 cbExt = cbName - (idxLastDot + 1);
+  for (const std::string &strWanted : rgExtensionsLower) {
+    if (strWanted.size() != cbExt) {
+      continue;
+    }
+
+    bool bMatch = true;
+    for (UINT32 i = 0; i < cbExt; ++i) {
+      if (ToLowerAsciiByte(pszName[idxLastDot + 1 + i]) != strWanted[i]) {
+        bMatch = false;
+        break;
+      }
+    }
+    if (bMatch) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 } // namespace
 
 CIndexStore::CIndexStore() : m_pNamePool(std::make_unique<CBumpStringPool>()), m_cUnresolvedParents(0), m_bBulkLoad(false) {}
@@ -496,13 +543,24 @@ bool CIndexStore::NodeMatchesParsedQuery(UINT32 nodeId, const CParsedQuery &plan
     return false;
   }
 
-  if (!plan.m_bHasFilenameFilter) {
-    if (nodeId >= m_rgNodes.size()) {
+  if (nodeId >= m_rgNodes.size()) {
+    return false;
+  }
+
+  const INDEX_NODE &node = m_rgNodes[nodeId];
+  if ((node.m_flags & INDEX_NODE_DELETED) != 0 || node.m_cbName == 0) {
+    return false;
+  }
+
+  if (plan.m_bHasExtensionFilter) {
+    const char *pszName = m_pNamePool->GetPtr(node.m_nameOffset);
+    if (!MatchesAnyExtension(pszName, node.m_cbName, plan.m_rgExtensionFiltersLower)) {
       return false;
     }
+  }
 
-    const INDEX_NODE &node = m_rgNodes[nodeId];
-    return (node.m_flags & INDEX_NODE_DELETED) == 0 && node.m_cbName > 0;
+  if (!plan.m_bHasFilenameFilter) {
+    return true;
   }
 
   return NodeMatchesQuery(nodeId, plan.m_filenameMatcher);

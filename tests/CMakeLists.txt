@@ -6,6 +6,7 @@ add_executable(Everything.Tests
     index_persistence_test.cpp
     index_search_entry_test.cpp
     mft_record_test.cpp
+    query_extension_filter_test.cpp
     ${CMAKE_SOURCE_DIR}/src/index/bump_string_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/index/index_persistence.cpp
     ${CMAKE_SOURCE_DIR}/src/index/index_store.cpp

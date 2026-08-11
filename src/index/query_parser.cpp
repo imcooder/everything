@@ -92,6 +92,46 @@ bool SetFilenameFilter(LPCWSTR wszFilename, CParsedQuery &plan) {
   return true;
 }
 
+WCHAR ToLowerAscii(WCHAR wch) {
+  if (wch >= L'A' && wch <= L'Z') {
+    return static_cast<WCHAR>(wch + (L'a' - L'A'));
+  }
+  return wch;
+}
+
+// Splits "txt;doc;PNG" into lowercased UTF-8 pieces {"txt", "doc", "png"}, skipping empty pieces
+// (e.g. a trailing ';' or "ext:;txt").
+bool SetExtensionFilter(const std::wstring &wstrExtList, CParsedQuery &plan) {
+  plan.m_rgExtensionFiltersLower.clear();
+
+  size_t idxStart = 0;
+  while (idxStart <= wstrExtList.size()) {
+    const size_t idxSep = wstrExtList.find(L';', idxStart);
+    const size_t idxEnd = (idxSep == std::wstring::npos) ? wstrExtList.size() : idxSep;
+
+    if (idxEnd > idxStart) {
+      std::wstring wstrPiece = wstrExtList.substr(idxStart, idxEnd - idxStart);
+      for (WCHAR &wch : wstrPiece) {
+        wch = ToLowerAscii(wch);
+      }
+
+      std::vector<char> rgUtf8;
+      if (!PathUtf8FromWide(wstrPiece.c_str(), rgUtf8)) {
+        return false;
+      }
+      plan.m_rgExtensionFiltersLower.emplace_back(rgUtf8.data(), rgUtf8.size());
+    }
+
+    if (idxSep == std::wstring::npos) {
+      break;
+    }
+    idxStart = idxSep + 1;
+  }
+
+  plan.m_bHasExtensionFilter = !plan.m_rgExtensionFiltersLower.empty();
+  return true;
+}
+
 bool ParseDrivePath(LPCWSTR wszPath, CParsedQuery &plan) {
   if (wszPath == nullptr || wszPath[0] == L'\0') {
     return true;
@@ -145,6 +185,38 @@ bool ParseSearchQuery(LPCWSTR wszQuery, CParsedQuery &plan) {
     }
 
     if (!ParseDrivePath(wstrPath.c_str(), plan)) {
+      return false;
+    }
+
+    if (!SetFilenameFilter(wstrFilename.empty() ? nullptr : wstrFilename.c_str(), plan)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  if (StartsWithIgnoreCase(wstrQuery.c_str(), L"ext:")) {
+    std::wstring wstrRemainder = wstrQuery.substr(4);
+    TrimInPlace(wstrRemainder);
+
+    const size_t idxSpace = wstrRemainder.find(L' ');
+    std::wstring wstrExtList;
+    std::wstring wstrFilename;
+
+    if (idxSpace == std::wstring::npos) {
+      wstrExtList = wstrRemainder;
+    } else {
+      wstrExtList = wstrRemainder.substr(0, idxSpace);
+      wstrFilename = wstrRemainder.substr(idxSpace + 1);
+      TrimInPlace(wstrFilename);
+    }
+
+    TrimInPlace(wstrExtList);
+    if (wstrExtList.empty()) {
+      return false;
+    }
+
+    if (!SetExtensionFilter(wstrExtList, plan)) {
       return false;
     }
 

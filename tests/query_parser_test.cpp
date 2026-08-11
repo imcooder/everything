@@ -47,3 +47,41 @@ TEST(QueryParser, EmptyQuery) {
   ExpectPathScope(plan, index::PATH_SCOPE_ENTIRE_VOLUME);
   EXPECT_FALSE(plan.m_bHasFilenameFilter);
 }
+
+TEST(QueryParser, ExtensionOnly) {
+  index::CParsedQuery plan;
+  ASSERT_TRUE(index::ParseSearchQuery(L"ext:txt", plan));
+  EXPECT_TRUE(plan.m_bHasExtensionFilter);
+  ASSERT_EQ(plan.m_rgExtensionFiltersLower.size(), 1u);
+  EXPECT_EQ(plan.m_rgExtensionFiltersLower[0], "txt");
+  EXPECT_FALSE(plan.m_bHasFilenameFilter);
+}
+
+TEST(QueryParser, ExtensionMixedCaseNormalizedToLower) {
+  index::CParsedQuery plan;
+  ASSERT_TRUE(index::ParseSearchQuery(L"ext:PNG", plan));
+  ASSERT_EQ(plan.m_rgExtensionFiltersLower.size(), 1u);
+  EXPECT_EQ(plan.m_rgExtensionFiltersLower[0], "png");
+}
+
+TEST(QueryParser, ExtensionListSemicolonSeparated) {
+  index::CParsedQuery plan;
+  ASSERT_TRUE(index::ParseSearchQuery(L"ext:txt;doc;PDF", plan));
+  ASSERT_EQ(plan.m_rgExtensionFiltersLower.size(), 3u);
+  EXPECT_EQ(plan.m_rgExtensionFiltersLower[0], "txt");
+  EXPECT_EQ(plan.m_rgExtensionFiltersLower[1], "doc");
+  EXPECT_EQ(plan.m_rgExtensionFiltersLower[2], "pdf");
+}
+
+TEST(QueryParser, ExtensionWithTrailingFilename) {
+  index::CParsedQuery plan;
+  ASSERT_TRUE(index::ParseSearchQuery(L"ext:txt report", plan));
+  ASSERT_EQ(plan.m_rgExtensionFiltersLower.size(), 1u);
+  EXPECT_EQ(plan.m_rgExtensionFiltersLower[0], "txt");
+  EXPECT_TRUE(plan.m_bHasFilenameFilter);
+}
+
+TEST(QueryParser, ExtensionEmptyValueRejected) {
+  index::CParsedQuery plan;
+  EXPECT_FALSE(index::ParseSearchQuery(L"ext:", plan));
+}
