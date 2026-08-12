@@ -4,6 +4,7 @@
 
 #include <shellapi.h>
 #include <shlwapi.h>
+#include <uxtheme.h>
 
 #include <cstdio>
 #include <iterator>
@@ -82,7 +83,11 @@ LRESULT CMainFrame::OnCreate(LPCREATESTRUCT /*lpCreateStruct*/) {
   m_edit.Create(m_hWnd, rcDummy, nullptr, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 0, IDC_EDIT_SEARCH);
 
   m_list.Create(m_hWnd, rcDummy, nullptr, WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_OWNERDATA | LVS_SHOWSELALWAYS, WS_EX_CLIENTEDGE, IDC_LIST_RESULTS);
-  m_list.SetExtendedListViewStyle(LVS_EX_FULLROWSELECT);
+  m_list.SetExtendedListViewStyle(LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+  // Matches real Explorer/Everything's alternating-row-shading and modern (theme-colored, not
+  // flat-blue) selection highlight — cosmetic only, requires the comctl32 v6 manifest above to
+  // have any visible effect at all (SetWindowTheme is a no-op against the legacy v5.82 DLL).
+  ::SetWindowTheme(m_list, L"Explorer", nullptr);
   // Column order/defaults match real Everything's own default layout (Name, Path, Size, Type,
   // Date Modified).
   m_list.InsertColumn(0, _T("Name"), LVCFMT_LEFT, 260);

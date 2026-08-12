@@ -3,6 +3,15 @@
 
 #include <shellapi.h>
 
+// Without an embedded manifest declaring this dependency, Windows loads the legacy,
+// unthemed comctl32.dll (v5.82, the pre-XP "Windows Classic" look — flat gray buttons/edit
+// boxes) even though InitCommonControlsEx() below still runs fine against it. This linker
+// directive merges a manifest fragment into the exe requesting the side-by-side v6.0.0.0
+// assembly instead, which is what actually turns on visual styles (themed controls matching
+// the current Windows theme) — InitCommonControlsEx alone only initializes whichever version
+// got loaded, it does not select one.
+#pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+
 CAppModule _Module;
 
 // Entry point. Linked with /ENTRY:mainCRTStartup + WIN32 subsystem (see src/CMakeLists.txt)
